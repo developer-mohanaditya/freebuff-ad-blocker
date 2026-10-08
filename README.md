@@ -127,6 +127,7 @@ already ships the `sh` and `perl` it uses:
 curl -fsSL https://freebuff-adblocker.vercel.app/downloads/freebuff-adblock-desktop.sh | sh
 
 sh freebuff-adblock.sh status    # what is applied, change nothing
+sh freebuff-adblock.sh scan      # every anchor this build has, change nothing
 sh freebuff-adblock.sh install   # patch, backing up first
 sh freebuff-adblock.sh revert    # restore the untouched original
 sh freebuff-adblock.sh doctor    # environment report, for a bug report
@@ -146,6 +147,32 @@ a function leaves the counts at zero and the tool stops, rather than
 half-patching a 9 MB file. The pristine file is copied to
 `~/freebuff-patch-backups/orchestrator.js.<version>.orig` before the first write,
 and `revert` puts it back.
+
+Each anchor has two forms, so a rename is not automatically a dead end. The
+first is the literal this tool was verified against; the second is a relaxation
+of it — the same gate with the identifier renamed, the same helper with
+`async`/`static` spelled differently. **A relaxation only counts when it appears
+the expected number of times *and* ad code sits within 320 bytes of every hit**,
+so a similarly shaped feature gate elsewhere in the bundle is never mistaken for
+the ad render path. A write made through a relaxation is re-counted immediately
+afterwards, and if the result disagrees the pristine copy goes straight back.
+
+The tool also carries its own version, separate from the extension's: how the
+desktop bundle gets patched changes on Freebuff's release cycle, not on a
+browser store's. `1.4.0` is the version that introduced relaxed anchors and
+`scan`.
+
+When a patch still reports `not found`, that is the new build telling you where
+it is: `scan` prints every candidate site it can see for each anchor — literal
+and relaxed, with the surrounding code — plus a probe of stable tokens
+(`displayAd`, `auction`, `agenticTestCampaign`, `gravity`, `sponsor`,
+`track/click`), and saves the same report to
+`~/freebuff-patch-backups/orchestrator-scan.<version>.txt`. It opens nothing for
+writing, so it is safe to run on a build you have not patched.
+
+Because the patches sit on the render entry points and the two request helpers,
+they cover *any* slot the app renders, including ones added in a Freebuff release
+this repo has never seen.
 
 It writes inside an app bundle, so macOS App Management has to allow it. When
 that is what blocked the write, the tool prints the exact System Settings path

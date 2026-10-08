@@ -37,6 +37,32 @@ const FIXTURE = [
   '',
 ].join('\n');
 
+/**
+ * The same build one release later: the gate renamed, the helpers now static.
+ * The literal anchors are gone, so only the relaxed strategy can find them.
+ */
+const RENAMED = [
+  'function displayAd(c){ if (agenticTestCampaign(process.env)) { return { ad: null }; } return { ad: 1 }; }',
+  'async function auction(c){ if (agenticTestCampaign(process.env)) { return { ads: [] }; } return { ads: [1] }; }',
+  'class Ads {',
+  '  static async post(path28, body2, options2 = {}) { return await fetch(path28, options2); }',
+  '  static async request(method, path28, payload, timeoutMs = REQUEST_TIMEOUT_MS) { return { ok: true }; }',
+  '}',
+  '',
+].join('\n');
+
+/**
+ * A build with one ad render path left, plus a feature gate that merely looks
+ * like the ad gate, well out of arm's reach of any ad code. The relaxed
+ * strategy counts two hits here, so only the ad-proximity check stops it.
+ */
+const DECOY = [
+  'function displayAd(c){ if (agenticTestCampaign(process.env)) { return { ad: null }; } return { ad: 1 }; }',
+  `/* ${'x'.repeat(900)} */`,
+  'function unrelated(c){ if (otherFeatureTest(process.env)) { return 1; } return 2; }',
+  '',
+].join('\n');
+
 const results = [];
 const check = (name, actual, expected = true) => {
   const ok = actual === expected;
@@ -154,6 +180,74 @@ const d = makeBundle();
 const dry = run(d.app, d.backups, 'install', '--dry-run');
 check('dry run exits 0', dry.status, 0);
 check('it writes nothing', fs.readFileSync(d.target, 'utf8') === FIXTURE);
+
+/* ------------------------------------------------------------ renamed build */
+
+console.log('\nrenamed build (the anchors moved)');
+const e = makeBundle();
+fs.writeFileSync(e.target, RENAMED);
+
+const renamedStatus = run(e.app, e.backups, 'status');
+check('status still exits 0', renamedStatus.status, 0);
+check('it reports the relaxed match', /via relaxed/.test(renamedStatus.stdout));
+
+const renamedInstall = run(e.app, e.backups, 'install');
+check('install exits 0', renamedInstall.status, 0);
+check('it says which anchor it matched', /via relaxed match/.test(renamedInstall.stdout));
+
+const relaxed = fs.readFileSync(e.target, 'utf8');
+check('the renamed gate is neutralised twice', count(relaxed, '/*FBD-ADS-OFF:render*/'), 2);
+check('the renamed gate text is gone', relaxed.includes('agenticTestCampaign'), false);
+check('the post helper is stubbed too', count(relaxed, '/*FBD-ADS-OFF:post*/'), 1);
+check('the request helper is stubbed too', count(relaxed, '/*FBD-ADS-OFF:request*/'), 1);
+
+run(e.app, e.backups, 'revert');
+check('revert restores the renamed build exactly', fs.readFileSync(e.target, 'utf8') === RENAMED);
+
+/* ------------------------------------------------------------------- decoy */
+
+console.log('\ndecoy gate far from ad code');
+const f = makeBundle();
+fs.writeFileSync(f.target, DECOY);
+
+const decoy = run(f.app, f.backups, 'install');
+check('install refuses', decoy.status !== 0);
+check('the render anchor reads as ambiguous', /render\s+ambiguous/.test(decoy.stdout));
+check('it points at scan', /freebuff-adblock\.sh scan/.test(decoy.stdout));
+check('the decoy file is untouched', fs.readFileSync(f.target, 'utf8') === DECOY);
+check('no backup was taken', fs.existsSync(f.backups), false);
+
+/* ----------------------------------------------------------- half patched */
+
+console.log('\nhalf-patched file');
+const h = makeBundle();
+const half = `${FIXTURE}/*FBD-ADS-OFF:render*/`;
+fs.writeFileSync(h.target, half);
+
+const halfStatus = run(h.app, h.backups, 'status');
+check('status refuses to call it patched', halfStatus.status !== 0);
+check('it reports the anchor as broken', /render\s+broken/.test(halfStatus.stdout));
+check('install refuses to stack on top of it', run(h.app, h.backups, 'install').status !== 0);
+check('it left the file alone', fs.readFileSync(h.target, 'utf8') === half);
+
+/* -------------------------------------------------------------------- scan */
+
+console.log('\nscan');
+const g = makeBundle();
+fs.writeFileSync(g.target, RENAMED);
+
+const scan = run(g.app, g.backups, 'scan');
+check('scan exits 0', scan.status, 0);
+check('scan changes nothing', fs.readFileSync(g.target, 'utf8') === RENAMED);
+check('scan names both strategies', /literal/.test(scan.stdout) && /relaxed/.test(scan.stdout));
+check('scan marks the usable anchor', /<- usable/.test(scan.stdout));
+check('scan shows the renamed gate in context', /agenticTestCampaign/.test(scan.stdout));
+check('scan reports the probes', /== probes ==/.test(scan.stdout));
+
+const scanFile = path.join(g.backups, 'orchestrator-scan.unknown.txt');
+const saved =
+  fs.existsSync(scanFile) && fs.readFileSync(scanFile, 'utf8').includes('== render ==');
+check('scan saves the report to attach', saved);
 
 const failed = results.filter((r) => !r).length;
 console.log('');

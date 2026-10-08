@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { buildDesktop } from './build-desktop.mjs';
+import { buildDesktop, DESKTOP_VERSION } from './build-desktop.mjs';
 import { ensureIcons } from './png.mjs';
 import { createZip, walk } from './zip.mjs';
 
@@ -198,7 +198,7 @@ function writeUpdateXml(version, packageInfo) {
  * Substitutions are regexes over already-substituted values, so rebuilding
  * never drifts: run it twice and the output is identical.
  */
-function writeDist(version, packageInfo, storeInfo, firefoxInfo, desktop) {
+function writeDist(version, packageInfo, storeInfo, firefoxInfo, desktop, desktopVersion) {
   fs.rmSync(DIST_DIR, { recursive: true, force: true });
   fs.mkdirSync(DIST_DIR, { recursive: true });
 
@@ -223,7 +223,7 @@ function writeDist(version, packageInfo, storeInfo, firefoxInfo, desktop) {
         `href="${desktop.archive.relativePath}"`
       )
       .replace(/(<span data-version>)[^<]*(<\/span>)/g, `$1${version}$2`)
-      .replace(/(<span data-desktop-version>)[^<]*(<\/span>)/g, `$1${version}$2`)
+      .replace(/(<span data-desktop-version>)[^<]*(<\/span>)/g, `$1${desktopVersion}$2`)
       .replace(/(<code data-download-path>)[^<]*(<\/code>)/g, `$1/${packageInfo.relativePath}$2`)
       .replace(
         /(<code data-desktop-command>)[^<]*(<\/code>)/g,
@@ -278,11 +278,11 @@ export function build() {
 
   const { unpacked, store, firefox } = packageAll(version, manifest);
   writeUpdateXml(version, unpacked);
-  const desktop = buildDesktop({ version, origin: SITE_ORIGIN });
-  writeDist(version, unpacked, store, firefox, desktop);
+  const desktop = buildDesktop({ version: DESKTOP_VERSION, origin: SITE_ORIGIN });
+  writeDist(version, unpacked, store, firefox, desktop, DESKTOP_VERSION);
 
   log(`v${version} - ${unpacked.fileCount} files, ${formatBytes(unpacked.bytes)}`);
-  log(`desktop  Freebuff Desktop patch tool v${version}`);
+  log(`desktop  Freebuff Desktop patch tool v${DESKTOP_VERSION}   (extension v${version})`);
   log(`package  site/${unpacked.relativePath}   (load unpacked, Chromium)`);
   log(`package  site/${store.relativePath}   (Chrome Web Store, Edge Add-ons)`);
   log(`package  site/${firefox.relativePath}   (addons.mozilla.org)`);

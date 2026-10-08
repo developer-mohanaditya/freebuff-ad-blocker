@@ -13,8 +13,11 @@
 #     return "nothing to show", and the two request helpers that talk to the ad
 #     API are made to give up before they send. Nothing else in the file changes.
 #   - It refuses to run at all unless every patch anchor is found the exact
-#     number of times it expects. A new Freebuff version that renames a function
-#     fails safe and changes nothing, rather than half-patching a 9 MB bundle.
+#     number of times it expects, and a relaxation is only accepted when ad code
+#     sits right beside it. A new Freebuff version that renames a function fails
+#     safe and changes nothing, rather than half-patching a 9 MB bundle - and
+#     `scan` then shows what that build does contain, so re-anchoring is a
+#     report to read instead of a dead end.
 #   - It backs up the pristine file before the first write, and `revert` puts it
 #     back.
 #
@@ -28,6 +31,7 @@
 #   sh freebuff-adblock.sh install    # patch, backing up first
 #   sh freebuff-adblock.sh revert     # restore the pristine backup
 #   sh freebuff-adblock.sh doctor     # environment report for a bug report
+#   sh freebuff-adblock.sh scan       # show the anchors this build has (for a re-anchor)
 #
 #   --app PATH          the Freebuff.app to patch (default: /Applications)
 #   --display-only      skip the request choke-points (render paths only)
@@ -43,7 +47,7 @@
 set -u
 
 # Stamped at build time (scripts/build-desktop.mjs).
-VERSION="1.3.0"
+VERSION="1.4.0"
 ORIGIN="https://freebuff-adblocker.vercel.app"
 
 BACKUP_DIR="${FREEBUFF_ADBLOCK_BACKUP_DIR:-$HOME/freebuff-patch-backups}"
@@ -71,7 +75,7 @@ hr() { printf '%s\n' "${DIM}--------------------------------------------${OFF}";
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    install|status|revert|doctor|help|version) COMMAND="$1"; shift ;;
+    install|status|revert|doctor|scan|help|version) COMMAND="$1"; shift ;;
     --app=*) APP="${1#--app=}"; shift ;;
     --backup-dir=*) BACKUP_DIR="${1#--backup-dir=}"; shift ;;
     --app) shift; [ $# -gt 0 ] || die "--app needs a path"; APP="$1"; shift ;;
@@ -143,41 +147,216 @@ my $target = shift(@ARGV) // '';
 my $deep   = shift(@ARGV) // '1';
 die "no target file\n" unless $target ne '' && -f $target;
 
-# Each patch names the exact text to look for, how many times it must appear,
-# and the replacement. `layer` separates the render patches from the request
-# choke-points so --display-only can drop the latter.
+# Each patch carries an ordered list of strategies.
+#
+# The first is the exact literal this tool was verified against. The second is a
+# relaxation, so a Freebuff release that renames a function but keeps the shape
+# does not brick the tool. A relaxation only counts as a match when it hits the
+# expected number of times *and* every hit has ad code beside it, so a decoy
+# `if (somethingTest...(process.env))` elsewhere in a 9 MB bundle is never
+# mistaken for the ad render path. When nothing matches exactly, the tool still
+# refuses - and points at `scan`, which prints what this build actually has.
+#
+# `layer` separates the render patches from the request choke-points so
+# --display-only can drop the latter.
+my $AD_NEAR = qr/(?:displayAd|auction|adRequest|adsRequest|gravity|sponsor|track\/click|adServer|adUnit|campaign|\bads?\b)/i;
+
 my @patches = (
   {
     id     => 'render',
     layer  => 'display',
     what   => 'stop the ad render paths (displayAd + auction)',
     expect => 2,
-    find   => qr/\Qif (localAgenticTestCampaign(process.env))\E/,
-    repl   => 'if (true/*FBD-ADS-OFF:render*/)',
+    tries  => [
+      {
+        name => 'literal',
+        find => qr/\Qif (localAgenticTestCampaign(process.env))\E/,
+        repl => 'if (true/*FBD-ADS-OFF:render*/)',
+      },
+      {
+        name => 'relaxed',
+        find => qr/\bif\s*\(\s*[A-Za-z_\$][\w\$]*Test[A-Za-z_\$]*\s*\(\s*process\.env\s*\)\s*\)/,
+        near => $AD_NEAR,
+        repl => 'if (true/*FBD-ADS-OFF:render*/)',
+      },
+    ],
   },
   {
     id     => 'post',
     layer  => 'request',
     what   => 'stop the ad request helper from sending',
     expect => 1,
-    find   => qr/async post\([^)]*\) \{/,
-    repl   => 'async post(path, body, options = {}) { return { ok: false, status: 0, json: async () => ({}) }; /*FBD-ADS-OFF:post*/',
+    tries  => [
+      {
+        name => 'literal',
+        find => qr/async post\([^)]*\) \{/,
+        repl => 'async post(path, body, options = {}) { return { ok: false, status: 0, json: async () => ({}) }; /*FBD-ADS-OFF:post*/',
+      },
+      {
+        name => 'relaxed',
+        find => qr/(?<![.\w\$])(?:(?:async|static)\s+)*post\s*\([^)]*\)\s*\{/,
+        near => $AD_NEAR,
+        repl => 'async post(path, body, options = {}) { return { ok: false, status: 0, json: async () => ({}) }; /*FBD-ADS-OFF:post*/',
+      },
+    ],
   },
   {
     id     => 'request',
     layer  => 'request',
     what   => 'stop the ad request helper from sending',
     expect => 1,
-    find   => qr/async request\([^)]*\) \{/,
-    repl   => 'async request(method, path, payload, timeoutMs = REQUEST_TIMEOUT_MS) { return { ok: !1, status: 0, message: "" }; /*FBD-ADS-OFF:request*/',
+    tries  => [
+      {
+        name => 'literal',
+        find => qr/async request\([^)]*\) \{/,
+        repl => 'async request(method, path, payload, timeoutMs = REQUEST_TIMEOUT_MS) { return { ok: !1, status: 0, message: "" }; /*FBD-ADS-OFF:request*/',
+      },
+      {
+        name => 'relaxed',
+        find => qr/(?<![.\w\$])(?:(?:async|static)\s+)*request\s*\([^)]*\)\s*\{/,
+        near => $AD_NEAR,
+        repl => 'async request(method, path, payload, timeoutMs = REQUEST_TIMEOUT_MS) { return { ok: !1, status: 0, message: "" }; /*FBD-ADS-OFF:request*/',
+      },
+    ],
   },
 );
+
+# ------------------------------------------------------------------ matching
+
+# Every position a pattern matches, as [offset, length].
+sub find_hits {
+  my ($src, $find) = @_;
+  my @hits;
+  while ($src =~ /$find/g) {
+    push @hits, [ $-[0], $+[0] - $-[0] ];
+  }
+  return @hits;
+}
+
+# A relaxation has to be corroborated: ad code within 320 bytes of the hit.
+# Literals have no `near` and are trusted as they always were.
+sub near_ok {
+  my ($src, $hit, $near) = @_;
+  return 1 unless defined $near;
+  my $from = $hit->[0] - 320;
+  $from = 0 if $from < 0;
+  return substr($src, $from, $hit->[1] + 640) =~ $near ? 1 : 0;
+}
+
+sub window {
+  my ($src, $hit, $span) = @_;
+  $span = 140 unless defined $span;
+  my $from = $hit->[0] - $span;
+  $from = 0 if $from < 0;
+  my $chunk = substr($src, $from, $hit->[1] + 2 * $span);
+  $chunk =~ s/\s+/ /g;
+  $chunk =~ s/^ //;
+  $chunk =~ s/ $//;
+  return $chunk;
+}
+
+# The first strategy this source can be patched with, the counts seen, and how
+# many hits were ad-adjacent.
+sub evaluate {
+  my ($src, $p) = @_;
+  my @notes;
+  my $hits = 0;
+
+  for my $t (@{ $p->{tries} }) {
+    my @h = find_hits($src, $t->{find});
+    next unless @h;
+    my $n    = scalar @h;
+    my $near = scalar grep { near_ok($src, $_, $t->{near}) } @h;
+    $hits = $n if $n > $hits;
+    push @notes, sprintf('%s: %d match(es), %d beside ad code', $t->{name}, $n, $near);
+    next unless $n == $p->{expect} && $near == $n;
+    # The first usable strategy wins, and the rest are not even run: on a 9 MB
+    # file the literal is the common case, and scanning it once beats scanning
+    # every relaxation looking for a better answer that does not exist.
+    return ($t, \@notes, $hits);
+  }
+
+  return (undef, \@notes, $hits);
+}
+
+# --------------------------------------------------------------- scan report
+
+my @PROBES = (
+  'displayAd', 'auction', 'agenticTestCampaign', 'testCampaign', 'process.env',
+  'async post(', 'async request(', 'gravity', 'sponsor', 'track/click', 'NODE_ENV',
+);
+
+# A read-only description of what this build actually contains. This is the
+# payload for a re-anchor: if a Freebuff update moves an anchor, `scan` shows
+# every candidate site and its surroundings, and nothing is written.
+sub run_scan {
+  my ($src, $target, $deep) = @_;
+  my @o;
+
+  push @o, '== environment ==';
+  push @o, "  target   $target";
+  push @o, '  bytes    ' . length($src);
+  push @o, "  perl     $]";
+  push @o, '';
+
+  for my $p (@patches) {
+    my $skip   = ($p->{layer} eq 'request' && $deep ne '1') ? 1 : 0;
+    my $marker = "FBD-ADS-OFF:$p->{id}";
+    my $n      = () = $src =~ /\Q$marker\E/g;
+
+    push @o, sprintf('== %s == %d needed, %d marker(s) already in place', $p->{id}, $p->{expect}, $n);
+    push @o, "   $p->{what}";
+
+    if ($skip) {
+      push @o, '   skipped: --display-only';
+      push @o, '';
+      next;
+    }
+
+    for my $t (@{ $p->{tries} }) {
+      my @h    = find_hits($src, $t->{find});
+      my $c    = scalar @h;
+      my $near = scalar grep { near_ok($src, $_, $t->{near}) } @h;
+      my $uses = ($c == $p->{expect} && $near == $c) ? '   <- usable' : '';
+
+      push @o, sprintf('   %-8s %d match(es), %d beside ad code%s', $t->{name}, $c, $near, $uses);
+
+      my $shown = 0;
+      for my $h (@h) {
+        last if $shown >= 3;
+        $shown++;
+        push @o, "     [$shown] " . window($src, $h);
+      }
+    }
+
+    push @o, '';
+  }
+
+  push @o, '== probes ==';
+  for my $probe (@PROBES) {
+    my @h = find_hits($src, qr/\Q$probe\E/);
+    push @o, sprintf('   %-20s %d', $probe, scalar @h);
+    my $shown = 0;
+    for my $h (@h) {
+      last if $shown >= 2;
+      $shown++;
+      push @o, "     [$shown] " . window($src, $h, 90);
+    }
+  }
+
+  return join("\n", @o) . "\n";
+}
 
 open(my $in, '<', $target) or die "cannot read $target: $!\n";
 binmode $in;
 local $/;
 my $src = <$in>;
 close $in;
+
+if ($mode eq 'scan') {
+  print run_scan($src, $target, $deep);
+  exit 0;
+}
 
 my $original = $src;
 my @rows;
@@ -188,31 +367,46 @@ for my $p (@patches) {
   my $skip   = ($p->{layer} eq 'request' && $deep ne '1') ? 1 : 0;
 
   my $markers = () = $src =~ /\Q$marker\E/g;
-  my $anchors = () = $src =~ /$p->{find}/g;
-
   my $state;
-  if ($skip)                        { $state = 'skipped'; }
-  elsif ($markers == $p->{expect})  { $state = 'applied'; }
-  elsif ($markers > 0)              { $state = 'broken'; }
-  elsif ($anchors == $p->{expect})  { $state = 'ready'; }
-  elsif ($anchors == 0)             { $state = 'unknown'; }
-  else                              { $state = 'ambiguous'; }
+  my $via     = '-';
+  my $anchors = 0;
 
-  if ($mode eq 'apply' && $state eq 'ready') {
-    my $find = $p->{find};
-    my $repl = $p->{repl};
-    my $n = ($src =~ s/$find/$repl/g);
-    if ($n == $p->{expect}) {
-      $state  = 'applied';
-      $markers = $p->{expect};
-      $anchors = 0;
+  if ($skip) {
+    $state = 'skipped';
+  } elsif ($markers == $p->{expect}) {
+    $state = 'applied';
+  } elsif ($markers > 0) {
+    $state = 'broken';
+  } else {
+    my ($usable, $notes, $hits) = evaluate($src, $p);
+
+    if ($usable) {
+      $via     = $usable->{name};
+      $anchors = $p->{expect};
+      $state   = 'ready';
+
+      if ($mode eq 'apply') {
+        my $find = $usable->{find};
+        my $repl = $usable->{repl};
+        my $n = ($src =~ s/$find/$repl/g);
+        if ($n == $p->{expect}) {
+          $state   = 'applied';
+          $markers = $p->{expect};
+          $anchors = 0;
+        } else {
+          $state = 'failed';
+        }
+      }
     } else {
-      $state = 'failed';
+      # Nothing usable. A hit count that is merely wrong is ambiguous (the
+      # shape is there, the count is not); no hits at all is unknown.
+      $state   = $hits ? 'ambiguous' : 'unknown';
+      $anchors = scalar find_hits($src, $p->{tries}[0]{find});
     }
   }
 
   push @rows, {
-    id => $id, what => $p->{what}, state => $state,
+    id => $id, what => $p->{what}, state => $state, via => $via,
     anchors => $anchors, markers => $markers, expect => $p->{expect},
   };
 }
@@ -233,12 +427,13 @@ if ($mode eq 'apply' && $changed && !$failed) {
 }
 
 for my $r (@rows) {
-  printf "PATCH|%s|%s|%d|%d|%d|%s\n",
-    $r->{id}, $r->{state}, $r->{anchors}, $r->{markers}, $r->{expect}, $r->{what};
+  printf "PATCH|%s|%s|%d|%d|%d|%s|%s\n",
+    $r->{id}, $r->{state}, $r->{anchors}, $r->{markers}, $r->{expect},
+    $r->{via}, $r->{what};
 }
 printf "WRITTEN|%d\n", ($mode eq 'apply' && $changed && !$failed) ? 1 : 0;
 print $failed ? "RESULT|fail\n" : "RESULT|ok\n";
-exit $failed ? 3 : 0;
+exit($failed ? 3 : 0);
 FBD_PERL
   perl "$prog" "$mode" "$target" "$deep"
   code=$?
@@ -251,7 +446,7 @@ verdict_of() {
 }
 
 render_report() {
-  printf '%s\n' "$1" | while IFS='|' read -r kind id state anchors markers expect what; do
+  printf '%s\n' "$1" | while IFS='|' read -r kind id state anchors markers expect via what; do
     [ "$kind" = "PATCH" ] || continue
     case "$state" in
       applied)   mark="${GREEN}applied${OFF}" ;;
@@ -263,6 +458,9 @@ render_report() {
       unknown)   mark="${RED}not found${OFF}" ;;
       *)         mark="${RED}${state}${OFF}" ;;
     esac
+    if [ "$via" = "relaxed" ]; then
+      mark="$mark ${DIM}(via relaxed match)${OFF}"
+    fi
     printf '  %-9s %s\n' "$id" "$mark"
   done
 }
@@ -309,6 +507,7 @@ cmd_help() {
   say "${B}commands${OFF}"
   say "  install   patch the app (default; backs up first)"
   say "  status    report what is applied - changes nothing"
+  say "  scan      show every anchor this build has - changes nothing"
   say "  revert    restore the pristine backup"
   say "  doctor    environment report"
   say "  version   print the tool version"
@@ -322,6 +521,11 @@ cmd_help() {
   say ""
   say "After any Freebuff update, run ${B}install${OFF} again - an update replaces"
   say "the whole Resources folder and the patch goes with it."
+  say ""
+  say "Each anchor has a literal form and a relaxed one. The relaxed form is only"
+  say "used when it is found the expected number of times ${B}and${OFF} ad code sits"
+  say "beside it, and a write is undone if the check afterwards disagrees. If a"
+  say "patch reports ${B}not found${OFF}, ${B}scan${OFF} lists what this build does have."
 }
 
 cmd_status() {
@@ -356,6 +560,8 @@ cmd_status() {
   say "  Either it was already modified by another tool, or this Freebuff version"
   say "  changed the file. Nothing was written."
   say ""
+  say "  See what this build actually has:  sh freebuff-adblock.sh scan"
+  say ""
   if [ -f "$BACKUP_DIR/orchestrator.js.$version.orig" ]; then
     say "  A pristine backup exists. Restore it, then install again:"
     say "    sh freebuff-adblock.sh revert && sh freebuff-adblock.sh install"
@@ -386,6 +592,8 @@ cmd_install() {
     bad "Refusing to patch - the file does not match this tool's expectations."
     say "  Nothing was written. Either it was modified by another tool, or this"
     say "  Freebuff version changed the ad code."
+    say ""
+    say "  See what this build actually has:  sh freebuff-adblock.sh scan"
     say ""
     if [ -f "$BACKUP_DIR/orchestrator.js.$version.orig" ]; then
       say "  A pristine backup is on disk:"
@@ -434,6 +642,23 @@ cmd_install() {
   }
 
   after="$(engine check "$target" "$DEEP")" || true
+
+  # A relaxed anchor is an inference, not a literal this tool was verified
+  # against, so the write only stands if a fresh count agrees with it. If it
+  # does not, the pristine copy goes straight back - a half-patched bundle is
+  # the one outcome worth undoing.
+  if [ "$(verdict_of "$after")" != "ok" ] || ! all_applied "$after"; then
+    render_report "$after"
+    say ""
+    bad "the patch did not verify after writing - putting the original back"
+    if cp "$backup" "$target" 2>/dev/null; then
+      ok "restored $target"
+    else
+      bad "could not restore $target - copy it back by hand: $backup"
+    fi
+    return 1
+  fi
+
   render_report "$after"
   say ""
 
@@ -519,6 +744,38 @@ cmd_doctor() {
   if app_running; then warn "Freebuff is running"; else ok "Freebuff is not running"; fi
 }
 
+# Read-only. Prints every candidate site this build contains, so a Freebuff
+# release that moved an anchor is a report to read rather than a dead end.
+# Nothing inside the bundle is opened for writing.
+cmd_scan() {
+  app="$(find_app)" || die "Freebuff Desktop was not found in /Applications or ~/Applications.
+  Pass --app /path/to/Freebuff.app if it lives somewhere else."
+  target="$app/Contents/Resources/orchestrator/orchestrator.js"
+  [ -f "$target" ] || die "no orchestrator.js in $app - is that the Freebuff app?"
+
+  version="$(app_version "$app")"
+
+  say "${B}Freebuff Ad Block${OFF} - anchor scan (tool $VERSION)"
+  say "  app      $app"
+  say "  version  $version"
+  say "  target   $target"
+  say ""
+
+  report="$(engine scan "$target" "$DEEP")" || die "the scan could not read $target"
+
+  printf '%s\n' "$report"
+  say ""
+
+  out="$BACKUP_DIR/orchestrator-scan.$version.txt"
+  if mkdir -p "$BACKUP_DIR" 2>/dev/null && printf '%s\n' "$report" > "$out" 2>/dev/null; then
+    ok "saved    $out"
+    say "  Nothing inside the app was touched. When a patch reports"
+    say "  ${B}not found${OFF}, this file is what re-anchoring the tool needs."
+  else
+    warn "could not write $out - copy the block above instead"
+  fi
+}
+
 # ------------------------------------------------------------------------ run
 
 case "$COMMAND" in
@@ -526,6 +783,7 @@ case "$COMMAND" in
   status)  cmd_status ;;
   revert)  cmd_revert ;;
   doctor)  cmd_doctor ;;
+  scan)    cmd_scan ;;
   version) cmd_version ;;
   help)    cmd_help ;;
   *)       die "unknown command: $COMMAND" ;;

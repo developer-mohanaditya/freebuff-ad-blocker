@@ -27,16 +27,25 @@ Licence: MIT.
 - **addons.mozilla.org** — version 1.3.0 submitted, awaiting review.
 - **Edge Add-ons** — not submitted.
 - **Install page** — live, with the desktop section added.
-- **Desktop tool** — built, tested and verified locally (32 checks), but the
-  files were never committed, so the published one-liner does not exist yet.
-  See the first open item.
+- **Desktop tool** — committed and pushed in `7d7cef8`, then updated here to
+  v1.4.0 and verified locally (57 checks). **The 1.4.0 change set is uncommitted**
+  (`git status --porcelain` lists it) and the site has not been redeployed, so
+  the live one-liner still serves 1.3.0 until both happen.
+- **Desktop tool v1.4.0** — anchors now have a relaxed form, `scan` reports what
+  an installed build actually contains, and a write made through a relaxation is
+  undone if the check afterwards disagrees. This is the release that makes a
+  Freebuff rebuild survivable. Its version is **independent of the extension's**
+  (`scripts/build-desktop.mjs` → `DESKTOP_VERSION`), so the tool can ship without
+  a browser-store submission: the desktop zip is 1.4.0 while the extension stays
+  1.3.0. The tool has not been run against the rebuilt app yet — no bundle to
+  inspect from the cloud workspace.
 
 Last verified, in this order, on the tree being handed off:
 
 ```
 npm run build     # ok — 3 extension zips + desktop tool + desktop zip + dist/
 npm run validate  # "All extension checks passed."  (exit 0)
-npm test          # 58 content-script + 18 install-page + 32 desktop checks pass  (exit 0)
+npm test          # 58 content-script + 18 install-page + 57 desktop checks pass  (exit 0)
 ```
 
 `npm run build` is safe to re-run: it overwrites `dist/` and the four zips, and
@@ -58,15 +67,16 @@ npm run validate                   # static checks that the stores would otherwi
 
 ## Open items
 
-1. **Commit and push the desktop tool.** HEAD was `810cc8e` and the working
-   tree carried the whole desktop tool, the edited docs and site, and this file
-   — all uncommitted (`git status --porcelain` lists the current set). Five
-   paths exist nowhere else: `desktop/`, `scripts/build-desktop.mjs`,
-   `scripts/test-desktop.mjs`, `site/downloads/freebuff-adblock-desktop.sh` and
-   `site/downloads/freebuff-adblock-desktop-1.3.0.zip`. Until they are pushed, a
-   clone of the repo has no desktop tool and the one-liner on the install page
-   404s. After pushing, redeploy the site so the stamped `desktop` /
-   `desktopZip` / `origin` fields reach `version.json`.
+1. **Commit and push the 1.4.0 change set, then redeploy the site.** HEAD is
+   `7d7cef8`, which already carries the desktop tool as it was in 1.3.0. What is
+   uncommitted now is this update: `desktop/freebuff-adblock.sh`,
+   `desktop/INSTALL.txt`, `scripts/build-desktop.mjs`, `scripts/build.mjs`,
+   `scripts/test-desktop.mjs`, `site/index.html`, `README.md`, this file, and the
+   rebuilt `site/downloads/` (the 1.3.0 desktop zip is deleted, the 1.4.0 one is
+   new and untracked). Until the site is redeployed, the live one-liner still
+   serves a 1.3.0 tool — which is the version that cannot survive a renamed
+   anchor. After the push, redeploy so the stamped `desktop` / `desktopZip` /
+   `origin` fields reach `version.json`.
 2. **Paste the listing URLs into `site/app.js` → `STORE_LINKS`.** Chrome's store
    URL is the one that matters today; `chrome` is still an empty string, so the
    hero shows the developer-install path even though the listing is live. Set
@@ -83,11 +93,22 @@ npm run validate                   # static checks that the stores would otherwi
 
 ## Traps worth remembering
 
-- **The desktop patch anchors are version-specific.** They were found and
-  verified against Freebuff Desktop **0.0.155**. If the rebuilt desktop app
-  renamed anything, every count drops to zero and the tool refuses to write —
-  that is the designed outcome, not a bug — but the anchors have to be found
-  again. Run `sh desktop/freebuff-adblock.sh status` first on the new build.
+- **The desktop patch anchors move between Freebuff releases.** The originals
+  were found and verified against Freebuff Desktop **0.0.155**; `1.4.0` can also
+  match a renamed gate or helper, but only when it appears the expected number of
+  times *and* ad code sits within 320 bytes of every hit. On a rebuilt app:
+
+  ```sh
+  sh desktop/freebuff-adblock.sh scan     # what this build has - writes nothing
+  sh desktop/freebuff-adblock.sh install
+  ```
+
+  A patch reading `not found` or `ambiguous` is the tool refusing to guess. The
+  `scan` report (`~/freebuff-patch-backups/orchestrator-scan.<version>.txt`) is
+  the payload for re-anchoring: it lists each candidate site with surrounding
+  code plus counts for stable tokens.  Send that file rather than a screenshot.
+  A legacy hand patch leaves no markers, so a zero-anchor `status` there means
+  "restore the pristine file first", not "the tool is broken".
 - **`TEST_AGENTIC_ADS` is a trap.** The env-var route into the app's test ads
   throws unless `NODE_ENV !== "production"` *and* the environment is `dev`, and
   it is called at module load, so setting it crashes the app instead of
@@ -103,8 +124,18 @@ npm run validate                   # static checks that the stores would otherwi
 - **The desktop UI bundle has a second ad stack** in
   `Resources/orchestrator/ui/assets/*.js` (`adPolicy`, `sponsored_task`,
   `sponsored-proposal`, `spotlight`, `ad-showcase`, `adBreakEvent`). The tool
-  only patches `orchestrator.js`. If an ad still renders in the app after a
-  successful patch, that bundle is the next place to look.
+  only patches `orchestrator.js`, and `scan` only reads `orchestrator.js`. A new
+  slot added in a newer desktop build is the most likely thing to live here, so
+  if an ad still renders after a successful patch, this is the next place to
+  look — and one command says which bundle carries it:
+
+  ```sh
+  d=/Applications/Freebuff.app/Contents/Resources/orchestrator
+  grep -l -E 'adPolicy|sponsored|spotlight|ad-showcase|adBreak' "$d"/*.js "$d"/ui/assets/*.js 2>/dev/null
+  ```
+
+  Send that output rather than a screenshot; the anchors get found the same way
+  the orchestrator ones were.
 - **Hosting deploys are Node-only and uploaded files lose their executable
   bit**, so invoke scripts as `sh ./scripts/foo.sh`, never `./scripts/foo.sh`.
 - **Shell heredocs were blocked in the cloud sandbox** — fixtures were generated
@@ -144,9 +175,12 @@ npm run validate                   # static checks that the stores would otherwi
 ## First week checklist
 
 1. `npm install --no-audit --no-fund`
-2. `npm run build && npm run validate && npm test` — should be clean on a fresh
-   clone once the pending files are pushed
+2. `npm run build && npm run validate && npm test` — clean on a fresh clone of
+   `7d7cef8` plus jsdom; the 1.4.0 tool changes need committing before that stays
+   true for the current tree
 3. `npm run preview` and click through `/` — hero, `#install`, `#desktop`,
    `#updates`, `/privacy`
 4. Close open item 1, then 2
-5. Run `sh desktop/freebuff-adblock.sh doctor` against the current desktop build
+5. Run `sh desktop/freebuff-adblock.sh scan` against the current desktop build,
+   then `install`. `scan` writes nothing, so it is the safe first move on a
+   build the tool has not seen.

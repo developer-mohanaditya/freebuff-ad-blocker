@@ -337,7 +337,7 @@
               <button type="button" class="copy" data-copy>Copy</button>
             </div>
             <p class="fine">
-              Prefer a file? <a data-desktop-zip href="downloads/freebuff-adblock-desktop-1.3.0.zip" download>Download
+              Prefer a file? <a data-desktop-zip href="downloads/freebuff-adblock-desktop-1.4.0.zip" download>Download
               the tool</a> — a zip with a double-clickable launcher and a short read-me — then run
               <code>sh freebuff-adblock.sh install</code>.
             </p>
@@ -345,6 +345,13 @@
               Report what is applied, and change nothing:
               <code>sh freebuff-adblock.sh status</code>. Undo it:
               <code>sh freebuff-adblock.sh revert</code>.
+            </p>
+            <p class="fine">
+              Tool v<span data-desktop-version>1.4.0</span>. It matches each anchor beside the ad
+              code, not just by name, and undoes its own write if the result does not check out. If
+              a Freebuff release moves something it cannot recognise, it says so instead of
+              guessing — <code>sh freebuff-adblock.sh scan</code> then prints what the installed
+              build actually contains, and changes nothing.
             </p>
           </div>
 

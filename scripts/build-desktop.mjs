@@ -20,6 +20,13 @@ import { fileURLToPath } from 'node:url';
 
 import { createZip } from './zip.mjs';
 
+/**
+ * The tool has its own version, deliberately not the extension's: a change to
+ * how the desktop bundle is patched must be shippable without pushing a new
+ * package to three browser stores. Bump this when desktop/ changes.
+ */
+export const DESKTOP_VERSION = '1.4.0';
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DESKTOP_DIR = path.join(ROOT, 'desktop');
 const DOWNLOADS_DIR = path.join(ROOT, 'site', 'downloads');

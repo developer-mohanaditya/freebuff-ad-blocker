@@ -218,6 +218,17 @@ async function reconcileVersion() {
 
     const download = document.querySelector('a[download]');
     if (download && data.zip) download.setAttribute('href', data.zip);
+
+    // The desktop tool has its own downloads and its own one-liner. They are
+    // stamped into the page at build time too; this only heals a stale cache.
+    const desktopZip = document.querySelector('[data-desktop-zip]');
+    if (desktopZip && data.desktopZip) desktopZip.setAttribute('href', data.desktopZip);
+
+    if (data.desktop && data.origin) {
+      document.querySelectorAll('[data-desktop-command]').forEach((el) => {
+        el.textContent = `curl -fsSL ${data.origin}/${data.desktop} | sh`;
+      });
+    }
   } catch {
     // Static values are already correct - nothing to do.
   }

@@ -61,7 +61,11 @@ const METHOD_STORE = 0;
 const METHOD_DEFLATE = 8;
 
 /**
- * @param {{ name: string, data: Buffer }[]} entries
+ * @param {{ name: string, data: Buffer, mode?: number }[]} entries
+ *   `mode` is optional and Unix-only. The extension packages omit it, so their
+ *   bytes are unchanged; a package that ships an executable (the desktop zip's
+ *   double-clickable launcher) passes 0o755, which macOS Archive Utility reads
+ *   back out of the external-attributes field when it extracts the file.
  * @returns {Buffer}
  */
 export function createZip(entries) {
@@ -82,6 +86,11 @@ export function createZip(entries) {
     const method = stored ? METHOD_STORE : METHOD_DEFLATE;
     const crc = crc32(source);
 
+    // A mode switches the entry to Unix and stores the permission bits where
+    // the extractor looks for them. Without one, the header stays exactly as it
+    // has always been, so the extension zips reproduce byte for byte.
+    const unixMode = typeof entry.mode === 'number' ? entry.mode : null;
+
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0); // local file header signature
     local.writeUInt16LE(20, 4); // version needed to extract
@@ -99,7 +108,9 @@ export function createZip(entries) {
 
     const central = Buffer.alloc(46);
     central.writeUInt32LE(0x02014b50, 0); // central directory signature
-    central.writeUInt16LE(20, 4); // version made by
+    // 0x031e is 'made by UNIX, version 3.0' - required for the mode below to
+    // mean anything to the extractor.
+    central.writeUInt16LE(unixMode === null ? 20 : 0x031e, 4); // version made by
     central.writeUInt16LE(20, 6); // version needed to extract
     central.writeUInt16LE(FLAG_UTF8, 8);
     central.writeUInt16LE(method, 10);
@@ -113,7 +124,7 @@ export function createZip(entries) {
     central.writeUInt16LE(0, 32); // comment length
     central.writeUInt16LE(0, 34); // disk number start
     central.writeUInt16LE(0, 36); // internal attributes
-    central.writeUInt32LE(0, 38); // external attributes
+    central.writeUInt32LE(unixMode === null ? 0 : ((unixMode & 0xffff) << 16) >>> 0, 38); // external attributes
     central.writeUInt32LE(offset, 42);
 
     centralParts.push(central, nameBuf);

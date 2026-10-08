@@ -3,7 +3,7 @@
   "version": "1.3.0",
   "private": true,
   "type": "module",
-  "description": "Chromium MV3 extension that blocks ads on freebuff.com, plus its install page.",
+  "description": "Chromium MV3 extension that blocks ads on freebuff.com, plus a macOS patch tool that blocks them in the Freebuff desktop app.",
   "scripts": {
     "build": "node scripts/build.mjs",
     "preview": "node scripts/build.mjs && node scripts/serve.mjs",
@@ -11,7 +11,8 @@
     "icons": "node scripts/gen-icons.mjs",
     "assets": "node scripts/store-assets.mjs",
     "validate": "node scripts/validate.mjs",
-    "test": "node scripts/test-detection.mjs && node scripts/test-site.mjs",
-    "check": "node --check scripts/build.mjs && node --check scripts/serve.mjs && node --check scripts/zip.mjs && node --check scripts/png.mjs && node --check scripts/store-assets.mjs && node --check scripts/validate.mjs"
+    "test": "node scripts/test-detection.mjs && node scripts/test-site.mjs && node scripts/test-desktop.mjs",
+    "test:desktop": "node scripts/test-desktop.mjs",
+    "check": "node --check scripts/build.mjs && node --check scripts/build-desktop.mjs && node --check scripts/serve.mjs && node --check scripts/zip.mjs && node --check scripts/png.mjs && node --check scripts/store-assets.mjs && node --check scripts/validate.mjs && node --check scripts/test-desktop.mjs"
   }
 }

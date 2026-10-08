@@ -9,6 +9,11 @@ build is thinking, and the product's own in-line "AD" cards.
 Site-scoped by design — it touches freebuff.com and nothing else. No accounts,
 no backend, no database, no telemetry, and nothing to configure.
 
+The **desktop app** is a separate bundle with no extension surface, so it has
+its own tool: a dependency-free shell script in [`desktop/`](desktop) that turns
+the app's bundled ad runtime off in place. Same rules — local, reversible, and
+nothing to configure.
+
 [Install it](https://freebuff-adblocker.vercel.app/) ·
 [Privacy policy](https://freebuff-adblocker.vercel.app/privacy) ·
 [Report an issue](https://github.com/developer-mohanaditya/freebuff-ad-blocker/issues)
@@ -108,6 +113,58 @@ the build time (or `SOURCE_DATE_EPOCH` when it is set), so two builds of the
 same sources are byte-identical and a signed package can be matched back to a
 commit.
 
+## Desktop app
+
+Freebuff Desktop renders its ads from a runtime it ships inside its own bundle —
+`Contents/Resources/orchestrator/orchestrator.js`, which the bundled Bun runs.
+That file is not in `app.asar`, and no browser extension can reach it, so the
+desktop app needs a different tool rather than a different rule.
+
+`desktop/freebuff-adblock.sh` is that tool. One file, no dependencies — macOS
+already ships the `sh` and `perl` it uses:
+
+```sh
+curl -fsSL https://freebuff-adblocker.vercel.app/downloads/freebuff-adblock-desktop.sh | sh
+
+sh freebuff-adblock.sh status    # what is applied, change nothing
+sh freebuff-adblock.sh install   # patch, backing up first
+sh freebuff-adblock.sh revert    # restore the untouched original
+sh freebuff-adblock.sh doctor    # environment report, for a bug report
+```
+
+It edits only the ad code, in four counted places:
+
+| Patch | Anchors | What it does |
+| --- | --- | --- |
+| `render` | 2 | forces `displayAd()` and `auction()` to return "nothing to show" |
+| `post` | 1 | the ad API helper returns a failure before it sends |
+| `request` | 1 | the same, for the web-host ad helper |
+
+The safety story is the counting. Every anchor has to appear the exact number of
+times the tool expects before it writes anything; a Freebuff version that renamed
+a function leaves the counts at zero and the tool stops, rather than
+half-patching a 9 MB file. The pristine file is copied to
+`~/freebuff-patch-backups/orchestrator.js.<version>.orig` before the first write,
+and `revert` puts it back.
+
+It writes inside an app bundle, so macOS App Management has to allow it. When
+that is what blocked the write, the tool prints the exact System Settings path
+instead of failing halfway through. It never asks for a password and never uses
+`sudo`.
+
+Two things it cannot do anything about, both stated on the install page:
+Freebuff has to be quit and reopened after patching, because the orchestrator is
+read once at launch; and every Freebuff update replaces `Resources/`, so the
+patch is gone after one and the tool has to be run again.
+
+`npm run test:desktop` exercises the whole thing against a throwaway bundle in a
+temp directory: patch, idempotence, revert, `--display-only`, the refusal path,
+and `--dry-run`. It never touches `/Applications` or the real backup folder.
+
+Patching a third-party app's bundled code may conflict with that app's terms of
+service. That is on the person running it, which is why nothing here does it
+silently.
+
 ## The ad network, and what happens when it changes
 
 The in-product slots are not hand-built by freebuff.com. They arrive from an ad
@@ -176,6 +233,12 @@ scripts/            zero-dependency build tooling
   png.mjs             minimal PNG encoder + icon artwork
   store-assets.mjs    promo tile, marquee, and the four listing screenshots
   gen-icons.mjs       force-regenerate icons
+  build-desktop.mjs   stamps + packages the desktop tool into site/downloads
+  test-desktop.mjs    desktop tool checks, against a throwaway bundle
+desktop/            the macOS patch tool for the desktop app
+  freebuff-adblock.sh      install / status / revert / doctor; the shipped file
+  Freebuff AdBlock.command double-click launcher, packaged in the zip
+  INSTALL.txt              the read-me that travels with the zip
 site/               the install page and everything it serves
   index.html          markup; the version is stamped in at build time
   styles.css
@@ -199,9 +262,11 @@ npm run preview   # build, then serve dist/ on 0.0.0.0:$PORT (default 4173)
 npm run icons     # force-regenerate extension/icons
 npm run assets    # redraw the store art: promo tile, marquee, screenshots
 npm run check     # syntax-check the build tooling
-npm run validate  # static extension checks (manifest, icons, DNR rules, selectors)
-npm test          # jsdom checks: the content script, then the install page
-                  # (needs `npm i --no-save jsdom`)
+npm run validate  # static checks: manifest, icons, DNR rules, selectors, desktop tool
+npm test          # jsdom checks for the content script and the install page,
+                  # then the desktop tool's shell checks
+                  # (jsdom needs `npm i --no-save jsdom`)
+npm run test:desktop  # just the desktop tool checks - no jsdom, no app bundle
 ```
 
 ## Hosting
@@ -230,8 +295,12 @@ update themselves.
 
 ## Scope
 
-Web version only. The desktop application is a separate binary with no
-extension surface, so a browser extension cannot reach it.
+Two apps, two tools. The **web version** is covered by the extension in
+`extension/`, which can only reach pages Chromium renders, so it stops there.
+The **desktop app** is a separate bundle with no extension surface, so it is
+covered by the local tool in `desktop/` instead. Neither has a server, an account
+or a telemetry endpoint, and neither touches anything but freebuff.com and the
+machine it runs on.
 
 ## License
 

@@ -8,6 +8,7 @@
  * Run with `npm run validate`.
  */
 
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -716,6 +717,73 @@ function checkStoreAssets() {
   else pass(`${STORE_ASSETS.length} store assets are the right size, with no alpha channel`);
 }
 
+/* ----------------------------------------------------------------- desktop */
+
+/**
+ * The desktop tool ships as a shell script that edits a bundle on someone
+ * else's machine, so the two things that must never quietly drift are its
+ * fail-safe (it refuses when the anchors do not match) and its two build-time
+ * placeholders (an unstamped script would report the literal __FBD_VERSION__
+ * and point its own help text at nothing).
+ */
+function checkDesktop() {
+  console.log('\ndesktop tool');
+
+  const file = path.join(ROOT, 'desktop', 'freebuff-adblock.sh');
+  if (!fs.existsSync(file)) {
+    fail('desktop/freebuff-adblock.sh is missing');
+    return;
+  }
+  pass('desktop/freebuff-adblock.sh exists');
+
+  const source = fs.readFileSync(file, 'utf8');
+
+  for (const token of ['__FBD_VERSION__', '__FBD_ORIGIN__']) {
+    source.includes(token)
+      ? pass(`build placeholder ${token} is present for build-desktop.mjs to fill in`)
+      : fail(`${token} is gone - the tool would ship without its version or origin`);
+  }
+
+  for (const id of ['render', 'post', 'request']) {
+    source.includes(`FBD-ADS-OFF:${id}`)
+      ? pass(`patch "${id}" is defined`)
+      : fail(`patch "${id}" is missing from the desktop tool`);
+  }
+
+  // The refusal path is the whole safety story: without it an unexpected
+  // orchestrator would be edited with whatever matched.
+  source.includes('Refusing to patch')
+    ? pass('the tool refuses to patch an unrecognised file')
+    : fail('the desktop tool no longer refuses an unrecognised orchestrator.js');
+
+  if (/^\s*sudo\s/m.test(source)) {
+    fail('the desktop tool runs sudo - it must never need a password');
+  } else {
+    pass('the desktop tool never escalates with sudo');
+  }
+
+  const syntax = spawnSync('sh', ['-n', file], { encoding: 'utf8' });
+  if (syntax.status === 0) pass('the desktop tool passes `sh -n`');
+  else fail(`the desktop tool has a shell syntax error: ${(syntax.stderr || '').trim()}`);
+
+  // The install page has to actually offer it, or the tool is unreachable.
+  const html = fs.readFileSync(path.join(ROOT, 'site', 'index.html'), 'utf8');
+
+  html.includes('id="desktop"')
+    ? pass('the install page has a desktop section')
+    : fail('site/index.html lost its #desktop section - the tool is unreachable');
+
+  html.includes('data-desktop-command') && html.includes('data-desktop-zip')
+    ? pass('the desktop one-liner and package are wired into the page')
+    : fail('site/index.html no longer carries the desktop command and zip hooks');
+
+  for (const part of ['freebuff-adblock-desktop.sh', 'freebuff-adblock-desktop-']) {
+    html.includes(part)
+      ? pass(`the page references ${part}`)
+      : fail(`site/index.html no longer references ${part}`);
+  }
+}
+
 /* ------------------------------------------------------------------ package */
 
 function run() {
@@ -731,6 +799,7 @@ function run() {
   checkStoreButtons();
   checkPrivacy();
   checkStoreAssets();
+  checkDesktop();
 
   console.log('');
   if (problems.length) {

@@ -1,0 +1,69 @@
+Freebuff AdBlock for Desktop  (v__FBD_VERSION__)
+=================================================
+
+Blocks the ads Freebuff Desktop renders from the orchestrator it ships inside
+its own app bundle.
+
+WHAT IS IN THIS FOLDER
+----------------------
+
+  Freebuff AdBlock.command   Double-click this. It opens Terminal and patches
+                             the app.
+
+  freebuff-adblock.sh        The tool itself, if you would rather run it by hand:
+
+                               sh freebuff-adblock.sh install
+
+USING IT
+--------
+
+1. Freebuff Desktop must be installed (usually /Applications/Freebuff.app).
+
+2. Double-click "Freebuff AdBlock.command", or run:
+
+     sh freebuff-adblock.sh install
+
+3. Quit Freebuff completely (Cmd-Q) and reopen it. The orchestrator is read
+   once at launch, so the patch only takes effect on the next start - focusing
+   the window is not enough.
+
+macOS may ask you for permission the first time, because this writes inside an
+app bundle. If you see "Operation not permitted", open:
+
+  System Settings -> Privacy & Security -> App Management
+
+switch on Terminal (or whichever app you ran this from), quit and reopen that
+app, and run the tool again. It never asks for a password and never uses sudo.
+
+OTHER COMMANDS
+--------------
+
+  sh freebuff-adblock.sh status    report what is applied - changes nothing
+  sh freebuff-adblock.sh revert    restore the untouched original
+  sh freebuff-adblock.sh doctor    environment report, for a bug report
+
+AFTER A FREEBUFF UPDATE
+-----------------------
+
+Every update replaces the app's Resources folder, so the patch goes away. Run
+install again after an update.
+
+WHAT IT DOES
+------------
+
+It only touches the ad code in
+Contents/Resources/orchestrator/orchestrator.js. It forces the two ad render
+entry points to return "nothing to show", and makes the two request helpers
+that talk to the ad API give up before they send. Nothing else changes.
+
+It refuses to run unless every anchor it expects is found the exact number of
+times it expects, so a Freebuff version that renames something fails safe and
+changes nothing rather than half-patching a 9 MB file. The untouched original
+is backed up before the first write, and `revert` puts it back.
+
+Upstream source and licence (MIT):
+  __FBD_ORIGIN__
+
+Patching a third-party application's bundled code may conflict with that
+application's terms of service. Use it on your own machine, at your own
+discretion.

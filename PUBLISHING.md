@@ -12,7 +12,7 @@ because the same file goes to Edge, and Firefox is a different package.
 Build the packages first:
 
 ```sh
-npm run build     # writes both zips into site/downloads/
+npm run build     # writes the extension zips (and the desktop tool) into site/downloads/
 ```
 
 ---
@@ -234,6 +234,29 @@ label, the link, and that the button is absent when there is no listing.
    nothing to do on our side.
 4. If you self-host the Firefox `.xpi`, replace the file and keep the same
    filename pattern the build stamps in.
+
+---
+
+## 6. The desktop tool
+
+The desktop app is **not** a store submission and has no listing. It ships as a
+file on this site, so there is no review, no signing and no fee — `npm run build`
+stamps and packages it into `site/downloads/` alongside the extension zips:
+
+| File | For |
+| --- | --- |
+| `freebuff-adblock-desktop.sh` | the `curl … | sh` one-liner on the install page |
+| `freebuff-adblock-desktop-<version>.zip` | the download button: the same script, a double-clickable launcher, `INSTALL.txt` |
+
+Both carry the same version as `extension/manifest.json`, so one bump moves
+everything. The zip stores Unix permission bits, which is what keeps the
+launcher executable after extraction — a bare file served over HTTP loses that
+bit, which is why the one-liner pipes the script into `sh` rather than
+executing it.
+
+The desktop tool is verified by `npm run test:desktop` and by `npm run validate`
+(shell syntax, the build placeholders, and all three patch markers), so a release
+checklist is the same as any other: `npm run build && npm test && npm run validate`.
 
 ---
 

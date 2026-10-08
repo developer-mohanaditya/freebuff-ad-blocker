@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { buildDesktop } from './build-desktop.mjs';
 import { ensureIcons } from './png.mjs';
 import { createZip, walk } from './zip.mjs';
 
@@ -145,10 +146,13 @@ function packageAll(version, manifest) {
   const firefox = pack(null, '-firefox', firefoxManifest(manifest));
 
   // Remove stale packages so downloads/ never accumulates old versions. Every
-  // current variant is kept - none is a leftover of another.
+  // current variant is kept - none is a leftover of another. The pattern is
+  // deliberately narrow: the desktop tool's packages live in the same folder
+  // and are cleaned by buildDesktop(), not here.
+  const EXTENSION_PACKAGE = /^freebuff-adblock-[\d.]+(-store|-firefox)?\.zip$/;
   const keep = new Set([unpacked.fileName, store.fileName, firefox.fileName]);
   for (const existing of fs.readdirSync(DOWNLOADS_DIR)) {
-    if (existing.endsWith('.zip') && !keep.has(existing)) {
+    if (EXTENSION_PACKAGE.test(existing) && !keep.has(existing)) {
       fs.unlinkSync(path.join(DOWNLOADS_DIR, existing));
       log('removed stale package', existing);
     }
@@ -194,7 +198,7 @@ function writeUpdateXml(version, packageInfo) {
  * Substitutions are regexes over already-substituted values, so rebuilding
  * never drifts: run it twice and the output is identical.
  */
-function writeDist(version, packageInfo, storeInfo, firefoxInfo) {
+function writeDist(version, packageInfo, storeInfo, firefoxInfo, desktop) {
   fs.rmSync(DIST_DIR, { recursive: true, force: true });
   fs.mkdirSync(DIST_DIR, { recursive: true });
 
@@ -214,8 +218,17 @@ function writeDist(version, packageInfo, storeInfo, firefoxInfo) {
         /href="downloads\/freebuff-adblock-[\d.]+-firefox\.zip"/g,
         `href="${firefoxInfo.relativePath}"`
       )
+      .replace(
+        /href="downloads\/freebuff-adblock-desktop-[\d.]+\.zip"/g,
+        `href="${desktop.archive.relativePath}"`
+      )
       .replace(/(<span data-version>)[^<]*(<\/span>)/g, `$1${version}$2`)
-      .replace(/(<code data-download-path>)[^<]*(<\/code>)/g, `$1/${packageInfo.relativePath}$2`);
+      .replace(/(<span data-desktop-version>)[^<]*(<\/span>)/g, `$1${version}$2`)
+      .replace(/(<code data-download-path>)[^<]*(<\/code>)/g, `$1/${packageInfo.relativePath}$2`)
+      .replace(
+        /(<code data-desktop-command>)[^<]*(<\/code>)/g,
+        `$1curl -fsSL ${SITE_ORIGIN}/${desktop.script.relativePath} | sh$2`
+      );
 
   const indexPath = path.join(DIST_DIR, 'index.html');
   fs.writeFileSync(indexPath, stamp(fs.readFileSync(indexPath, 'utf8')));
@@ -242,6 +255,8 @@ function writeDist(version, packageInfo, storeInfo, firefoxInfo) {
         zip: packageInfo.relativePath,
         store: storeInfo ? storeInfo.relativePath : null,
         firefox: firefoxInfo ? firefoxInfo.relativePath : null,
+        desktop: desktop ? desktop.script.relativePath : null,
+        desktopZip: desktop ? desktop.archive.relativePath : null,
         origin: SITE_ORIGIN,
       },
       null,
@@ -263,9 +278,11 @@ export function build() {
 
   const { unpacked, store, firefox } = packageAll(version, manifest);
   writeUpdateXml(version, unpacked);
-  writeDist(version, unpacked, store, firefox);
+  const desktop = buildDesktop({ version, origin: SITE_ORIGIN });
+  writeDist(version, unpacked, store, firefox, desktop);
 
   log(`v${version} - ${unpacked.fileCount} files, ${formatBytes(unpacked.bytes)}`);
+  log(`desktop  Freebuff Desktop patch tool v${version}`);
   log(`package  site/${unpacked.relativePath}   (load unpacked, Chromium)`);
   log(`package  site/${store.relativePath}   (Chrome Web Store, Edge Add-ons)`);
   log(`package  site/${firefox.relativePath}   (addons.mozilla.org)`);

@@ -903,6 +903,29 @@ function checkDesktop(manifest) {
     pass('the desktop tool never escalates with sudo');
   }
 
+  // `verify` is the half of the story no file on disk can answer - whether the
+  // app that is open now loaded the patched file - and the install page tells
+  // people to use it. It has to exist in both the help text and the dispatch, or
+  // the page and the tool disagree about what the tool does.
+  source.includes('verify    wait') && /^\s*verify\)\s+cmd_verify/m.test(source)
+    ? pass('`verify` is documented in the help text and dispatched')
+    : fail('`verify` is missing from the help text or the command dispatch');
+
+  // Waiting is only acceptable because it is bounded and interruptible: a run
+  // left alone must always come back, and a person must be able to stop it.
+  /^WAIT_SECS=\d+$/m.test(source) && source.includes("trap 'interrupted=1' INT")
+    ? pass('the relaunch wait has a default timeout and Ctrl-C stops it')
+    : fail('the relaunch wait has no default timeout, or cannot be interrupted');
+
+  // And it must only ever wait for a relaunch that can happen: with Freebuff
+  // closed there is nothing to observe, so a piped or scripted install would sit
+  // on the wait for the whole timeout. The `|| true` matters too - a wait that
+  // times out must not turn a successful patch into a failure.
+  /if \[ "\$WAIT" = "1" \]; then\s+verify_running "\$app" "\$target" \|\| true/.test(source) &&
+  source.includes('if app_running; then')
+    ? pass('install waits only when Freebuff is open, and a timed-out wait cannot fail it')
+    : fail('install can wait with Freebuff closed, or lets a timed-out wait fail the patch');
+
   const syntax = spawnSync('sh', ['-n', file], { encoding: 'utf8' });
   if (syntax.status === 0) pass('the desktop tool passes `sh -n`');
   else fail(`the desktop tool has a shell syntax error: ${(syntax.stderr || '').trim()}`);

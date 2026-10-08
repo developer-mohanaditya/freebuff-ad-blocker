@@ -25,7 +25,9 @@ USING IT
 
 3. Quit Freebuff completely (Cmd-Q) and reopen it. The orchestrator is read
    once at launch, so the patch only takes effect on the next start - focusing
-   the window is not enough.
+   the window is not enough. The tool waits for that relaunch and then reports
+   what the app it finds is actually running, so the patch does not have to be
+   taken on trust. Ctrl-C stops the wait at any time.
 
 macOS may ask you for permission the first time, because this writes inside an
 app bundle. If you see "Operation not permitted", open:
@@ -39,6 +41,7 @@ OTHER COMMANDS
 --------------
 
   sh freebuff-adblock.sh status    report what is applied - changes nothing
+  sh freebuff-adblock.sh verify    wait for the relaunch, then check what it loaded
   sh freebuff-adblock.sh scan      show every anchor this build has - changes nothing
   sh freebuff-adblock.sh revert    restore the untouched original
   sh freebuff-adblock.sh doctor    environment report, for a bug report
@@ -64,6 +67,32 @@ appears. To get the full report:
 Both list every candidate site the build has, write a copy to your backup
 folder, and touch nothing inside the app. The piped one is for when you ran the
 one-liner above and have no local copy to point at.
+
+IS IT ACTUALLY OFF?
+--------------------
+
+A patch on disk is not a patch in effect. The orchestrator is read once, when
+Freebuff starts, so patching a running app changes nothing until it is
+relaunched. That is what `verify` is for:
+
+  sh freebuff-adblock.sh verify
+
+It waits for Freebuff to be quit and reopened, then compares two times - when the
+patch was written, and when the process running now started. Started later means
+the app you are looking at is the one that read the patched file. It also lists
+the ad code still in the build, so you can see the patch is aimed at something
+real rather than at code that has moved. `install` runs the same check for you
+whenever Freebuff is open, which is why it sits and waits after patching.
+
+  sh freebuff-adblock.sh verify --no-wait       report now, do not wait
+  sh freebuff-adblock.sh verify --timeout 60    wait at most a minute
+
+The one thing none of this can see is whether an ad break still appears - that is
+the app's behaviour, and only you can watch it. On the free tier, run a turn and
+watch the thread: an ad card is the one carrying an "AD" chip or a /track/click
+link. If one appears with both markers applied and the process started after the
+patch, that is worth reporting - it means Freebuff has a second ad path, and the
+scan report above is what a re-anchor needs.
 
 WHAT IT DOES
 ------------

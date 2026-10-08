@@ -142,11 +142,23 @@ already ships the `sh` and `perl` it uses:
 curl -fsSL https://freebuff-adblocker.vercel.app/downloads/freebuff-adblock-desktop.sh | sh
 
 sh freebuff-adblock.sh status    # what is applied, change nothing
+sh freebuff-adblock.sh verify    # wait for the relaunch, check what it loaded
 sh freebuff-adblock.sh scan      # every anchor this build has, change nothing
 sh freebuff-adblock.sh install   # patch, backing up first
 sh freebuff-adblock.sh revert    # restore the untouched original
 sh freebuff-adblock.sh doctor    # environment report, for a bug report
 ```
+
+`status` and `scan` read the file. `verify` is the one that answers the question
+no file can: whether the app you have open is running it. The orchestrator is read
+once at launch, so it compares the time the patch was written with the time the
+process running now started — waited for, if Freebuff is currently open — and
+prints the ad code still in the build, so you can see the anchors are aimed at
+code that is really there. `install` runs that check for you whenever Freebuff is
+open; `--no-wait` reports what is known now instead of waiting, and
+`--timeout SECONDS` bounds the wait. Ctrl-C stops it. What none of them can see
+is whether an ad break still appears: that is the app's behaviour, and `verify`
+says so rather than implying otherwise.
 
 It edits only the ad code, at two counted anchors:
 
@@ -289,7 +301,7 @@ scripts/            zero-dependency build tooling
   build-desktop.mjs   stamps + packages the desktop tool into site/downloads
   test-desktop.mjs    desktop tool checks, against a throwaway bundle
 desktop/            the macOS patch tool for the desktop app
-  freebuff-adblock.sh      install / status / revert / doctor; the shipped file
+  freebuff-adblock.sh      install / status / verify / revert / doctor; the shipped file
   Freebuff AdBlock.command double-click launcher, packaged in the zip
   INSTALL.txt              the read-me that travels with the zip
 site/               the install page and everything it serves

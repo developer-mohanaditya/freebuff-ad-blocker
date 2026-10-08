@@ -30,6 +30,7 @@
 #   sh freebuff-adblock.sh            # install (the default)
 #   sh freebuff-adblock.sh status     # report what is applied, change nothing
 #   sh freebuff-adblock.sh install    # patch, backing up first
+#   sh freebuff-adblock.sh verify     # wait for the relaunch, check what it loaded
 #   sh freebuff-adblock.sh revert     # restore the pristine backup
 #   sh freebuff-adblock.sh doctor     # environment report for a bug report
 #   sh freebuff-adblock.sh scan       # show the anchors this build has (for a re-anchor)
@@ -39,9 +40,17 @@
 #   --dry-run           with install: report what would happen, write nothing
 #   --backup-dir PATH   where the pristine copy lives
 #   --resign            ad-hoc re-sign the bundle after patching
+#   --no-wait           verify: report now instead of waiting for a relaunch
+#   --timeout SECONDS   verify: how long to wait (default 300)
 #
 # Every Freebuff update replaces Contents/Resources, so the patch is gone after
 # one. Run `install` again after an update.
+#
+# The patch is only half the answer: the orchestrator is read once at launch, so
+# a patched file with an old process in memory is a patched file doing nothing.
+# `verify` is the other half - it waits for the relaunch and then checks that the
+# process running now started after the patch was written. `install` runs it for
+# you when Freebuff is open. Both are read-only.
 #
 # MIT licensed. See LICENSE.
 
@@ -56,6 +65,11 @@ APP="${FREEBUFF_APP:-}"
 DEEP=1
 DRY=0
 RESIGN=0
+# Waiting is the point of `verify`, and it is only ever done when Freebuff is
+# open - a closed app has no relaunch to observe, and an unattended install must
+# not sit here. The wait is bounded anyway, and Ctrl-C stops it.
+WAIT=1
+WAIT_SECS=300
 COMMAND=""
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -76,7 +90,7 @@ hr() { printf '%s\n' "${DIM}--------------------------------------------${OFF}";
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    install|status|revert|doctor|scan|help|version) COMMAND="$1"; shift ;;
+    install|status|verify|revert|doctor|scan|help|version) COMMAND="$1"; shift ;;
     --app=*) APP="${1#--app=}"; shift ;;
     --backup-dir=*) BACKUP_DIR="${1#--backup-dir=}"; shift ;;
     --app) shift; [ $# -gt 0 ] || die "--app needs a path"; APP="$1"; shift ;;
@@ -85,11 +99,18 @@ while [ $# -gt 0 ]; do
     --deep) DEEP=1; shift ;;
     --dry-run) DRY=1; shift ;;
     --resign) RESIGN=1; shift ;;
+    --no-wait) WAIT=0; shift ;;
+    --timeout) shift; [ $# -gt 0 ] || die "--timeout needs a number of seconds"; WAIT_SECS="$1"; shift ;;
+    --timeout=*) WAIT_SECS="${1#--timeout=}"; shift ;;
     -h|--help) COMMAND=help; shift ;;
     --version) COMMAND=version; shift ;;
     *) die "unknown argument: $1  (try --help)" ;;
   esac
 done
+
+case "$WAIT_SECS" in
+  ''|*[!0-9]*) die "--timeout needs a number of seconds, not '$WAIT_SECS'" ;;
+esac
 
 [ -n "$COMMAND" ] || COMMAND=install
 
@@ -126,6 +147,102 @@ app_version() {
 app_running() {
   command -v pgrep >/dev/null 2>&1 || return 1
   pgrep -x Freebuff >/dev/null 2>&1
+}
+
+#
+# The relaunch check.
+#
+# `status` and `scan` read a file, and a file cannot say whether the app you are
+# looking at is running it. The orchestrator is read once at launch, so the one
+# honest test is a comparison of two times: when the patch was written, and when
+# the process that is running now started. Started later means the patched file
+# is what it read. Nothing here writes anything and nothing here leaves the
+# machine.
+
+# Every orchestrator process running out of this bundle. The path is the app's
+# own, so a bundle patched with --app is matched too.
+orchestrator_pids() {
+  command -v pgrep >/dev/null 2>&1 || return 1
+  want="$1/Contents/Resources/orchestrator/orchestrator.js"
+  for pid in $(pgrep -f "$want" 2>/dev/null); do
+    # `pgrep -f` matches any command line that merely *mentions* the path - a
+    # `tail -f` on it, an editor, a shell whose arguments name it. Only the
+    # process actually running the file ends with it, and only that one is the
+    # orchestrator. Without this, a check that happened to name the path would
+    # find itself and call the app verified.
+    cmd="$(ps -p "$pid" -o command= 2>/dev/null | sed 's/[[:space:]]*$//')"
+    case "$cmd" in
+      *"$want") printf '%s\n' "$pid" ;;
+    esac
+  done
+}
+
+# When that process started, as an epoch second. Elapsed time is the only thing
+# ps gives portably, so the start is now minus it. ps reports it in whole
+# seconds, which is a second of slop either way, so the comparison that uses this
+# allows for exactly that much and no more - see the pass condition below.
+proc_start_epoch() {
+  et="$(ps -p "$1" -o etime= 2>/dev/null | tr -d '[:space:]')"
+  [ -n "$et" ] || return 1
+  days=0
+  case "$et" in *-*) days="${et%%-*}"; et="${et#*-}" ;; esac
+  h=0; m=0; s=0
+  case "$et" in
+    *:*:*) h="${et%%:*}"; rest="${et#*:}"; m="${rest%%:*}"; s="${rest#*:}" ;;
+    *:*)   m="${et%%:*}"; s="${et#*:}" ;;
+    *)     s="$et" ;;
+  esac
+  case "$days$h$m$s" in *[!0-9]*) return 1 ;; esac
+  printf '%s' "$(( $(date +%s) - (days * 86400 + h * 3600 + m * 60 + s) ))"
+}
+
+# The readable form of the same thing, for the report only. Never compared.
+proc_started_at() {
+  ps -p "$1" -o lstart= 2>/dev/null | tr -s ' ' | sed 's/^ //;s/ $//'
+}
+
+# The patch time, as an epoch second. BSD stat first (macOS), GNU second, so the
+# same helper answers on the machine this patches and in the test sandbox.
+file_mtime() {
+  m="$(stat -f '%m' "$1" 2>/dev/null)"
+  case "$m" in ''|*[!0-9]*) m="$(stat -c '%Y' "$1" 2>/dev/null)" ;; esac
+  case "$m" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s' "$m"
+}
+
+# "18s after the patch", "4m before the patch" - how the two times differ, in
+# words, for the report. Never for the decision.
+span_words() {
+  secs="$1"; when="after"
+  if [ "$secs" -lt 0 ]; then secs=$(( 0 - secs )); when="before"; fi
+  if [ "$secs" -lt 90 ]; then printf '%ss %s the patch' "$secs" "$when"
+  else printf '%sm %s the patch' "$(( secs / 60 ))" "$when"; fi
+}
+
+# The whole line about the two times. A delta inside the last two seconds is
+# reported as what it is - as close as the clock here resolves - rather than as
+# "1s before the patch", which would read as a contradiction next to a pass.
+clock_words() {
+  delta="$1"
+  if [ "$delta" -lt -2 ]; then
+    printf 'that is %s, so it has not been relaunched since' "$(span_words "$delta")"
+  elif [ "$delta" -le 1 ]; then
+    printf 'that is within a second of the patch, as close as this clock resolves'
+  else
+    printf 'that is %s' "$(span_words "$delta")"
+  fi
+}
+
+# The ad runtime this tool patches, as "auction 17 · gravity 4". Empty when none
+# of those names appears at all - the one way this build can be said to have no
+# ad code left for the patch to block. Read-only.
+ad_code_line() {
+  engine probes "$1" "$DEEP" 2>/dev/null | awk -F'|' '
+    $1 != "PROBE" { next }
+    $2 == "auction" || $2 == "displayAd" || $2 == "gravity" ||
+    $2 == "sponsor" || $2 == "track/click" {
+      if ($3 > 0) { printf "%s%s %s", sep, $2, $3; sep = " · " }
+    }'
 }
 
 #
@@ -229,6 +346,14 @@ sub find_hits {
     push @hits, [ $-[0], $+[0] - $-[0] ];
   }
   return @hits;
+}
+
+# A probe is a substring a person greps for by hand, matched case-insensitively:
+# a case-sensitive `agenticTestCampaign` misses `localAgenticTestCampaign`, which
+# reads as "the ad runtime is gone" when it is right there.
+sub probe_hits {
+  my ($src, $probe) = @_;
+  return find_hits($src, qr/\Q$probe\E/i);
 }
 
 # A relaxation has to be corroborated: ad code within 320 bytes of the hit.
@@ -341,12 +466,9 @@ sub run_scan {
     push @o, '';
   }
 
-  # Case-insensitive: the probes are substrings a person greps for by hand, and
-  # a case-sensitive `agenticTestCampaign` misses `localAgenticTestCampaign`,
-  # which reads as "the ad runtime is gone" when it is right there.
   push @o, '== probes == (case-insensitive)';
   for my $probe (@PROBES) {
-    my @h = find_hits($src, qr/\Q$probe\E/i);
+    my @h = probe_hits($src, $probe);
     push @o, sprintf('   %-20s %d', $probe, scalar @h);
     my $shown = 0;
     for my $h (@h) {
@@ -367,6 +489,16 @@ close $in;
 
 if ($mode eq 'scan') {
   print run_scan($src, $target, $deep);
+  exit 0;
+}
+
+# The same probe counts without the prose. `scan` and the relaunch check both
+# want them; only one of those is for a person to read.
+if ($mode eq 'probes') {
+  for my $probe (@PROBES) {
+    my @h = probe_hits($src, $probe);
+    printf "PROBE|%s|%d\n", $probe, scalar @h;
+  }
   exit 0;
 }
 
@@ -532,6 +664,7 @@ cmd_help() {
   say "${B}commands${OFF}"
   say "  install   patch the app (default; backs up first)"
   say "  status    report what is applied - changes nothing"
+  say "  verify    wait for Freebuff to be relaunched, then check what it loaded"
   say "  scan      show every anchor this build has - changes nothing"
   say "  revert    restore the pristine backup"
   say "  doctor    environment report"
@@ -543,6 +676,14 @@ cmd_help() {
   say "  --dry-run          report only, write nothing"
   say "  --backup-dir PATH  where the pristine copy lives"
   say "  --resign           ad-hoc re-sign the bundle after patching"
+  say "  --no-wait          verify: report now instead of waiting for the relaunch"
+  say "  --timeout SECONDS  how long verify waits (default 300)"
+  say ""
+  say "A patch on disk is not the same as a patch in effect: the orchestrator is"
+  say "read once at launch. ${B}verify${OFF} waits for the relaunch and reports the"
+  say "two times that decide it - when the patch was written and when the process"
+  say "running now started. ${B}install${OFF} does that for you whenever Freebuff is"
+  say "open. Ctrl-C stops the wait; nothing it does writes to the app."
   say ""
   say "After any Freebuff update, run ${B}install${OFF} again - an update replaces"
   say "the whole Resources folder and the patch goes with it."
@@ -572,7 +713,8 @@ cmd_status() {
   if [ "$(verdict_of "$report")" = "ok" ]; then
     if all_applied "$report"; then
       say ""
-      say "  ${GREEN}Ads are off.${OFF} Quit Freebuff and reopen it if you have not already."
+      say "  ${GREEN}Ads are off.${OFF} Quit Freebuff and reopen it, then check what it loaded:"
+      say "    sh freebuff-adblock.sh verify"
     else
       say ""
       say "  ${YELLOW}Not patched yet.${OFF} Run: sh freebuff-adblock.sh install"
@@ -706,8 +848,17 @@ cmd_install() {
     say "${B}Freebuff is running. Quit it completely (Cmd-Q) and reopen it.${OFF}"
     say "The orchestrator is read once at launch, so the patch only takes effect"
     say "on the next start - focusing the window is not enough."
+    say ""
+    # Only when there is a relaunch to wait for. A closed app has nothing to
+    # observe, and an unattended install must not sit here for five minutes.
+    if [ "$WAIT" = "1" ]; then
+      verify_running "$app" "$target" || true
+    else
+      say "  Then check what it loaded:  sh freebuff-adblock.sh verify"
+    fi
   else
     say "${B}Open Freebuff.${OFF} The patch takes effect on the next launch."
+    say "  Then check what it loaded:  sh freebuff-adblock.sh verify"
   fi
   say ""
   say "Undo any time:  sh freebuff-adblock.sh revert"
@@ -806,11 +957,140 @@ cmd_scan() {
   fi
 }
 
+# What no file can answer: whether the app you are looking at loaded the patched
+# file. The orchestrator is read once at launch, so a process that started after
+# the patch was written is reading it - and that is the whole test. Waiting is
+# the price, because the answer only becomes true after a relaunch.
+cmd_verify() {
+  app="$(find_app)" || die "Freebuff Desktop was not found in /Applications or ~/Applications.
+  Pass --app /path/to/Freebuff.app if it lives somewhere else."
+  target="$app/Contents/Resources/orchestrator/orchestrator.js"
+  [ -f "$target" ] || die "no orchestrator.js in $app - is that the Freebuff app?"
+
+  version="$(app_version "$app")"
+  say "${B}Freebuff Ad Block${OFF} - desktop tool $VERSION"
+  say "  app      $app"
+  say "  version  $version"
+  say "  target   $target"
+  say ""
+
+  report="$(engine check "$target" "$DEEP")" || true
+
+  if [ "$(verdict_of "$report")" != "ok" ]; then
+    render_report "$report"
+    say ""
+    bad "This orchestrator.js does not match what the tool expects."
+    say "  There is nothing of this tool's to verify, and nothing was written."
+    say ""
+    say "  See what this build actually has:  sh freebuff-adblock.sh scan"
+    return 1
+  fi
+
+  if ! all_applied "$report"; then
+    render_report "$report"
+    say ""
+    say "  ${YELLOW}Not patched yet.${OFF} Run: sh freebuff-adblock.sh install"
+    return 1
+  fi
+
+  render_report "$report"
+  say ""
+  verify_running "$app" "$target"
+}
+
+# The two times, and the wait between them. Returns 0 only when the process
+# running now started after the patch was written.
+verify_running() {
+  app="$1"; target="$2"
+  mtime="$(file_mtime "$target")" || mtime=""
+  remaining="$WAIT_SECS"
+  announced=0
+  waiting=0
+  interrupted=0
+  trap 'interrupted=1' INT
+
+  while :; do
+    pid=""; started=""
+    for candidate in $(orchestrator_pids "$app"); do
+      s="$(proc_start_epoch "$candidate")" || continue
+      if [ -z "$started" ] || [ "$s" -gt "$started" ]; then pid="$candidate"; started="$s"; fi
+    done
+
+    # Two seconds of tolerance, and both seconds are the clock's fault: ps
+    # reports a process's age in whole seconds, so one started immediately after
+    # the write can read as a second before it. No real relaunch is ever that
+    # close to the patch, and a false "relaunch and run this again" is worse than
+    # a false pass in a window two seconds wide.
+    if [ -n "$pid" ] && [ -n "$mtime" ] && [ "$started" -ge "$(( mtime - 2 ))" ]; then
+      say "  running    pid $pid, started $(proc_started_at "$pid")"
+      say "             $(clock_words "$(( started - mtime ))")"
+      ad="$(ad_code_line "$target")"
+      if [ -n "$ad" ]; then
+        say "  ad code    still in this build: $ad"
+      else
+        warn "the ad runtime this patch aims at is not in this build"
+        say "             Freebuff may have removed it, or moved it. scan lists"
+        say "             every site this build does have."
+      fi
+      say ""
+      ok "the running app is the patched file"
+      say "  The ad auction in it returns no ads, and the ad client gives up before"
+      say "  it sends. What no check here can see is whether an ad break still"
+      say "  appears - only you can. On the free tier, run a turn: an ad card is"
+      say "  the one carrying an \"AD\" chip or a /track/click link."
+      trap - INT
+      return 0
+    fi
+
+    # Why not, said once, so a long wait does not repeat itself.
+    if [ "$announced" = "0" ]; then
+      if [ -z "$pid" ]; then
+        say "  running    Freebuff is not open."
+      elif [ -z "$mtime" ]; then
+        say "  running    pid $pid, started $(proc_started_at "$pid")"
+        say "             the patch time could not be read, so the two cannot be compared"
+      else
+        say "  running    pid $pid, started $(proc_started_at "$pid")"
+        say "             $(clock_words "$(( started - mtime ))")"
+      fi
+      announced=1
+    fi
+
+    if [ "$WAIT" = "0" ]; then
+      say ""
+      say "  ${YELLOW}Not verified.${OFF} This check needs Freebuff running the patched"
+      say "  file. Quit it completely (Cmd-Q), reopen it, then run it again:"
+      say "    sh freebuff-adblock.sh verify"
+      trap - INT
+      return 1
+    fi
+
+    if [ "$waiting" = "0" ]; then
+      say ""
+      say "  Waiting for Freebuff to be quit and reopened…  ${DIM}(Ctrl-C to stop)${OFF}"
+      waiting=1
+    fi
+
+    if [ "$interrupted" = "1" ] || [ "$remaining" -le 0 ]; then
+      say ""
+      say "  ${YELLOW}Stopped waiting.${OFF} The patch itself is fine - this check only"
+      say "  needs the relaunch. Run it again once Freebuff is open:"
+      say "    sh freebuff-adblock.sh verify"
+      trap - INT
+      return 1
+    fi
+
+    sleep 2
+    remaining=$(( remaining - 2 ))
+  done
+}
+
 # ------------------------------------------------------------------------ run
 
 case "$COMMAND" in
   install) cmd_install ;;
   status)  cmd_status ;;
+  verify)  cmd_verify ;;
   revert)  cmd_revert ;;
   doctor)  cmd_doctor ;;
   scan)    cmd_scan ;;

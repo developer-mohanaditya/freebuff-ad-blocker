@@ -29,7 +29,7 @@
            inspected and released together, so this tag carries the same number
            as every file name in downloads/ - the extension zips and the desktop
            package all read <version>, and this is the only version there is. -->
-      <span class="pill">v<span data-version>1.4.1</span></span>
+      <span class="pill">v<span data-version>1.4.2</span></span>
     </header>
 
     <main>
@@ -183,13 +183,13 @@
                 new path again.
               </p>
               <p>
-                <a class="btn btn-primary" data-zip href="downloads/freebuff-adblock-1.4.1.zip" download>
+                <a class="btn btn-primary" data-zip href="downloads/freebuff-adblock-1.4.2.zip" download>
                   Download extension
-                  <span class="btn-meta">v<span data-version>1.4.1</span> · zip</span>
+                  <span class="btn-meta">v<span data-version>1.4.2</span> · zip</span>
                 </a>
               </p>
               <div class="copy-row">
-                <code data-download-path>/downloads/freebuff-adblock-1.4.1.zip</code>
+                <code data-download-path>/downloads/freebuff-adblock-1.4.2.zip</code>
                 <button type="button" class="copy" data-copy>Copy</button>
               </div>
             </div>
@@ -243,7 +243,7 @@
               shared — the same ruleset, the same content script, the same popup.
             </p>
             <p>
-              <a href="downloads/freebuff-adblock-1.4.1-firefox.zip" download>Download the Firefox
+              <a href="downloads/freebuff-adblock-1.4.2-firefox.zip" download>Download the Firefox
               package</a>, then open <code>about:debugging#/runtime/this-firefox</code>, choose
               <strong>Load Temporary Add-on</strong>, and select <code>manifest.json</code> from
               the folder you extracted. A temporary add-on lasts until Firefox restarts — a build
@@ -386,17 +386,19 @@
               <button type="button" class="copy" data-copy>Copy</button>
             </div>
             <p class="fine">
-              Prefer a file? <a data-desktop-zip href="downloads/freebuff-adblock-desktop-1.4.1.zip" download>Download
+              Prefer a file? <a data-desktop-zip href="downloads/freebuff-adblock-desktop-1.4.2.zip" download>Download
               the tool</a> — a zip with a double-clickable launcher and a short read-me — then run
               <code>sh freebuff-adblock.sh install</code>.
             </p>
             <p class="fine">
               Report what is applied, and change nothing:
-              <code>sh freebuff-adblock.sh status</code>. Undo it:
+              <code>sh freebuff-adblock.sh status</code>. Check what the app you have open
+              actually loaded — it waits for the relaunch and then says so:
+              <code>sh freebuff-adblock.sh verify</code>. Undo it:
               <code>sh freebuff-adblock.sh revert</code>.
             </p>
             <p class="fine">
-              Tool v<span data-version>1.4.1</span>, anchored against Freebuff Desktop
+              Tool v<span data-version>1.4.2</span>, anchored against Freebuff Desktop
               <strong>0.0.164</strong>: it forces the ad auction to return nothing and cuts the ad
               client off from its API, and it undoes its own write if the result does not check
               out. If a Freebuff release moves something it cannot recognise, it refuses and
@@ -412,7 +414,10 @@
             <ol class="mini-steps">
               <li>
                 <strong>Quit Freebuff completely</strong> (⌘Q) and reopen it. The orchestrator is
-                read once at launch, so bringing the window forward is not enough.
+                read once at launch, so bringing the window forward is not enough. The tool waits
+                for that relaunch and then reports what it finds: whether the running process
+                started after the patch was written, and whether the ad code it targets is still in
+                the build. Ctrl-C stops the wait.
               </li>
               <li>
                 <strong>If macOS says “Operation not permitted”</strong>, it is App Management
@@ -435,26 +440,21 @@
             <p class="eyebrow">Why it is safe to run</p>
             <h2>It refuses to guess</h2>
             <p>
-              The tool matches the exact ad code it expects to find, and only the ad code: the two
-              places the app renders an ad, and the two helpers that call the ad API. It counts
-              every anchor before it writes, and if the numbers do not match — a new Freebuff
-              version that renamed something, or a file someone already edited — it stops and
-              changes nothing, rather than half-patching a 9&nbsp;MB file. Every run prints what it
-              found first, so <code>status</code> tells you exactly what is applied on your machine.
+              The tool matches the exact ad code it expects to find, and only the ad code: the one
+              gate the ad auction consults, and the one request helper every ad API call goes
+              through. It counts every anchor before it writes, and if the numbers do not match — a
+              new Freebuff version that renamed something, or a file someone already edited — it
+              stops and changes nothing, rather than half-patching a 9&nbsp;MB file. Every run
+              prints what it found first, so <code>status</code> tells you exactly what is applied
+              on your machine.
             </p>
           </div>
           <div class="callout-aside" aria-hidden="true">
             <div class="rule">
               <span class="rule-id">render</span>
-              <span class="rule-pri">2 anchors</span>
-              <span class="rule-action allow">off</span>
-              <span class="rule-dom">displayAd · auction</span>
-            </div>
-            <div class="rule">
-              <span class="rule-id">post</span>
               <span class="rule-pri">1 anchor</span>
               <span class="rule-action allow">off</span>
-              <span class="rule-dom">ad request helper</span>
+              <span class="rule-dom">the auction gate</span>
             </div>
             <div class="rule">
               <span class="rule-id">request</span>
@@ -484,7 +484,7 @@
 
     <footer class="footer">
       <p>
-        Freebuff Ad Block · v<span data-version>1.4.1</span> · site-scoped, no accounts, no
+        Freebuff Ad Block · v<span data-version>1.4.2</span> · site-scoped, no accounts, no
         telemetry.
       </p>
       <p class="fine">

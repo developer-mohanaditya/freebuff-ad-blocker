@@ -8,7 +8,9 @@
  *   - the helpers that are NOT the ad path are left exactly as they were,
  *   - a build whose anchor count changed is refused, not half-patched,
  *   - running it twice does not stack a second patch on top of the first,
- *   - `revert` restores the exact original bytes.
+ *   - `revert` restores the exact original bytes,
+ *   - `verify` says nothing is proven while the app is closed, and confirms the
+ *     running app once a process that started after the patch exists.
  *
  * The anchor shapes here are taken from a real Freebuff Desktop **0.0.164**
  * bundle, as reported by `scan` on that build: one render gate inside
@@ -25,7 +27,7 @@
  * Run with `npm run test:desktop` (also part of `npm test`).
  */
 
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -334,6 +336,124 @@ const pipedScan = runPiped(j.app, j.backups, 'scan');
 check('`sh -s scan` exits 0', pipedScan.status, 0);
 check('and prints the scan report', /== render ==/.test(pipedScan.stdout));
 check('and names the tool version it is running', /anchor scan \(tool \S+\)/.test(pipedScan.stdout));
+
+/* ------------------------------------------------------------------ verify */
+
+/**
+ * The relaunch check, which is the one thing `status` cannot say. It is driven
+ * by two times rather than by anything on disk, so it has to be tested against a
+ * real process: `pgrep -f` finds a process whose command line *ends* with the
+ * orchestrator path, and a plain `sh -c 'sleep 30; exit 0' <path>` is exactly
+ * that - the same shape as the bundled Bun process, without needing Freebuff.
+ */
+console.log('\nverify');
+
+const v = makeBundle();
+
+const beforeInstall = run(v.app, v.backups, 'verify', '--no-wait');
+check('verify exits non-zero before the patch is applied', beforeInstall.status !== 0);
+check('it says it is not patched yet', /Not patched yet/.test(beforeInstall.stdout));
+check('it writes nothing', read(v.target) === CURRENT);
+
+run(v.app, v.backups, 'install');
+const patchedBytes = read(v.target);
+
+const idle = run(v.app, v.backups, 'verify', '--no-wait');
+check('verify exits non-zero with Freebuff closed', idle.status !== 0);
+check('it reports both anchors applied', /render\s+applied/.test(idle.stdout) && /request\s+applied/.test(idle.stdout));
+check('it says Freebuff is not open', /Freebuff is not open/.test(idle.stdout));
+check('it points at running verify again', /freebuff-adblock\.sh verify/.test(idle.stdout));
+check('verify changes nothing in the bundle', read(v.target) === patchedBytes);
+
+const noTimeout = run(v.app, v.backups, 'verify', '--no-wait', '--timeout', 'soon');
+check('a non-numeric --timeout is refused', /--timeout needs/.test(`${noTimeout.stdout}${noTimeout.stderr}`));
+
+const ORCH = path.join(v.app, 'Contents', 'Resources', 'orchestrator', 'orchestrator.js');
+const standIn = () => spawn('sh', ['-c', 'sleep 30; exit 0', ORCH], { detached: true, stdio: 'ignore' });
+const retire = (child) => {
+  try {
+    process.kill(-child.pid, 'SIGKILL');
+  } catch {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* it has already gone */
+    }
+  }
+};
+
+/**
+ * The no-wait cases are decided by two times, so the fixture writes one of them
+ * directly: a patch written a minute ago, or a minute from now. Sleeping through
+ * a real minute would test the same comparison more slowly, and ps only reports a
+ * process's age to the second anyway - the wait itself is covered end to end
+ * below, where a pid that appeared after watching began is the evidence.
+ */
+const stampPatchTime = (target, seconds) => {
+  const when = (Date.now() + seconds * 1000) / 1000;
+  fs.utimesSync(target, when, when);
+};
+
+// The half that matters more: a process that started *before* the write is an
+// app that has not been relaunched, and it must never be reported as verified.
+console.log('\nverify, with an app that was already running');
+const stale = makeBundle();
+const already = spawn(
+  'sh',
+  ['-c', 'sleep 30; exit 0', path.join(stale.app, 'Contents', 'Resources', 'orchestrator', 'orchestrator.js')],
+  { detached: true, stdio: 'ignore' }
+);
+already.unref();
+
+await new Promise((resolve) => setTimeout(resolve, 400));
+run(stale.app, stale.backups, 'install');
+stampPatchTime(stale.target, 60);
+const notYet = run(stale.app, stale.backups, 'verify', '--no-wait');
+retire(already);
+
+check('a process started before the patch is not verified', notYet.status !== 0);
+check('it says the app has not been relaunched since', /has not been relaunched since/.test(notYet.stdout));
+check('it reports the gap it measured', /before the patch/.test(notYet.stdout));
+check('and the patch itself still went in', read(stale.target).includes('/*FBD-ADS-OFF:render*/'));
+
+const live = standIn();
+live.unref();
+await new Promise((resolve) => setTimeout(resolve, 400));
+stampPatchTime(v.target, -60);
+
+const seen = run(v.app, v.backups, 'verify', '--no-wait');
+retire(live);
+
+check('verify exits 0 once a process started after the patch exists', seen.status, 0);
+check('it names the pid it found', /pid \d+/.test(seen.stdout));
+check('it reports the process as started after the patch', /after the patch/.test(seen.stdout));
+check('it names the running app as the patched file', /running app is the patched file/.test(seen.stdout));
+check('it reports the ad code still in the build', /still in this build: .*auction \d+/.test(seen.stdout));
+check('it says what only the user can see', /only you can/.test(seen.stdout));
+
+// The whole point of the command: started with the app closed, it has to sit on
+// its own and finish when the app comes back, with no second command to run.
+const waiting = spawn(
+  'sh',
+  [TOOL, 'verify', '--app', v.app, '--backup-dir', v.backups, '--timeout', '20'],
+  { stdio: ['ignore', 'pipe', 'pipe'] }
+);
+let waitOut = '';
+waiting.stdout.on('data', (chunk) => {
+  waitOut += chunk;
+});
+
+await new Promise((resolve) => setTimeout(resolve, 600));
+check('it waits while Freebuff is closed', /Waiting for Freebuff/.test(waitOut));
+
+const arrived = standIn();
+arrived.unref();
+const waitedCode = await new Promise((resolve) => waiting.on('exit', resolve));
+retire(arrived);
+
+check('the wait ends by itself once the app comes back', waitedCode, 0);
+check('and it reaches the same verdict', /running app is the patched file/.test(waitOut));
+check('and it still wrote nothing', read(v.target) === patchedBytes);
 
 /* ---------------------------------------------------- the shipped artifact */
 

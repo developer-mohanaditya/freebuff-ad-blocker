@@ -39,7 +39,17 @@ Licence: MIT.
   telemetry poster and the `/api/logs` shipper, so it could only break logging
   while blocking no ads. Verified against fixtures built from the windows
   0.0.164's own `scan` printed, decoys included.
-- **One version for the whole product: v1.4.1, not yet deployed.** The extension
+- **The desktop tool can now prove the patch is in effect, not just on disk.**
+  `verify` waits for Freebuff to be quit and reopened, then compares two times:
+  when the patch was written, and when the process running now started. Started
+  later means the app that is open read the patched file. It also prints the ad
+  code still in the build, so a patch aimed at code that moved is visible rather
+  than silent. `install` runs the same check when Freebuff is open; `--no-wait`
+  reports instead of waiting and `--timeout SECONDS` bounds the wait, and a
+  timeout can never fail an install that already succeeded. It cannot see whether
+  an ad break still appears — that is the app's behaviour, and it says so.
+- **One version for the whole product: v1.4.2, built here and not yet deployed.**
+  1.4.1 was the 0.0.164 re-anchor; 1.4.2 adds the relaunch check above. The extension
   and the desktop tool are inspected and released together, so
   `extension/manifest.json` is the only version there is: it names the three
   browser packages, the desktop package and the tool's own stamp, `update.xml`
@@ -47,15 +57,15 @@ Licence: MIT.
   `DESKTOP_VERSION` any more, and no `desktopVersion` in `version.json`. It is
   1.4.1 rather than 1.4.0 because the **live** one-liner already serves a 1.4.0
   that cannot patch 0.0.164: one number for two different tools is the drift the
-  single version exists to prevent. The live site still serves the older build,
-  and the stores are still on 1.3.0, so their first upload can simply be 1.4.1.
+  single version exists to prevent. The  live site still serves the older build, and the stores are still on 1.3.0, so
+  their first upload can simply be whatever this tree builds - 1.4.2.
 
 Last verified, in this order, on the tree being handed off:
 
 ```
 npm run build     # ok — 3 extension zips + desktop tool + desktop zip + dist/
 npm run validate  # "All extension checks passed."  (exit 0)
-npm test          # 58 content-script + 58 install-page + 81 desktop checks pass  (exit 0)
+npm test          # 58 content-script + 58 install-page + 104 desktop checks pass  (exit 0)
 ```
 
 `npm run build` is safe to re-run: it overwrites `dist/` and the four zips, and
@@ -89,7 +99,7 @@ npm run validate                   # static checks that the stores would otherwi
    extension is updated by the store anyway. So the placeholder stays until the
    self-hosted/forcelist route is actually wanted. README explains why an unpacked
    extension never polls it regardless.
-3. **In 1.4.1, make the manifest description browser-neutral.** The current one
+3. **In the next version bump, make the manifest description browser-neutral.** The current one
    mentions Chromium and Firefox; AMO accepted it but it reads oddly there. It is
    a manifest field, so it needs the version bump to reach the stores - the rest
    of a release needs none.

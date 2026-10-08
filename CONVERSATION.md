@@ -39,7 +39,8 @@ procedure. This file carries the *reasoning* and the *verification*.
 4. [Turn 4 — "the version tag is still not updated"](#turn-4) ✅
 5. [Turn 5 — one product, one version, filenames follow the tag](#turn-5) ✅
 6. [Turn 6 — this export](#turn-6) ✅
-7. [Current state appendix](#appendix)
+7. [Turn 7 — the patch can prove it is in effect](#turn-7) ✅
+8. [Current state appendix](#appendix)
 
 ---
 
@@ -349,17 +350,111 @@ output is included for any turn.
 
 ---
 
+<a id="turn-7"></a>
+## Turn 7 — the patch can prove it is in effect ✅ verbatim
+
+**User:**
+
+> So, after quitting and reopening the app post installation. do the user manually, perform the second check - but it will be nice if we wait till the app is closed and reopened , perform checks and see if the ads exists on the updated version or not
+
+**Agent reply:**
+
+You are right that the second check was the weak link, and it was manual. What it
+was checking is real and nothing else checks it, so it is now a command.
+
+### The gap it closes
+
+`status` and `scan` read a file. Neither can answer whether the app you have open
+is running what is on disk — and the orchestrator is read once, at launch, so a
+patch written while the app was open has no effect until it is relaunched. That is
+the case the second check covered, and it is the one a file cannot see.
+
+### `verify`
+
+```sh
+sh freebuff-adblock.sh verify                # wait for the relaunch, then check
+sh freebuff-adblock.sh verify --no-wait      # report what is known now
+sh freebuff-adblock.sh verify --timeout 60   # bound the wait (default 300s)
+```
+
+It waits for Freebuff to be quit and reopened, then compares two times: when the
+patch was written, and when the process running now started. Started later means
+the app that is open read the patched file. It prints the pid, the readable start
+time and the gap, plus the ad code still in the build (`auction 17 · gravity 4 ·
+track/click 2`) so a patch aimed at code that has moved shows up as an empty list
+rather than as silence. Read-only; Ctrl-C stops the wait. Exit 0 only when it
+actually verified.
+
+The comparison allows for two seconds. `ps` reports a process's age in whole
+seconds, so a process started immediately after the write can read as a second
+before it; the test suite caught exactly that, which is why the tolerance exists
+and why the report says "within a second of the patch" instead of printing a
+disagreement. A real relaunch is never that close to the patch.
+
+### `install` waits too
+
+With Freebuff open, `install` now runs the check itself as soon as you quit and
+reopen — the double-click launcher gets the verdict before its "Press Return"
+prompt. It waits **only** when the app is already running: a closed app has no
+relaunch to observe, and a scripted or piped install must not sit on a wait. A
+wait that times out cannot fail an install that already succeeded.
+
+### Verified
+
+`npm test` — 58 content-script + 58 install-page + **104** desktop checks, exit 0,
+four consecutive runs with no flakes. The new desktop checks drive the check with
+real processes: `sh -c 'sleep 30; exit 0' <orchestrator path>` is the stand-in,
+because `pgrep -f` finds a process whose command line *ends* with that path.
+
+Then: nothing running reports "Freebuff is not open" and exits 1; a process
+started after the patch exits 0 and names the pid; a process started before it is
+refused with "has not been relaunched since"; started with the app closed, it sits
+on "Waiting for Freebuff to be quit and reopened", then finishes by itself and
+reaches the same verdict, with the bundle unchanged. The two no-wait cases set the
+patch time directly (`fs.utimesSync`, ±60s) rather than sleeping through a minute.
+
+`npm run validate` gains three assertions: `verify` is in both the help text and
+the dispatch, the wait has a default timeout and a Ctrl-C trap, and `install`
+waits only inside the `app_running` branch with `|| true` on the call.
+
+A real find on the way: `pgrep -f` matches *any* command line that mentions the
+path — a `tail -f` on it, an editor, a shell whose arguments name it. PIDs are now
+filtered to those whose command line actually ends with the file, which is also
+what made the tests deterministic.
+
+### What it still cannot say
+
+The one thing no check here can see is whether an ad break still appears. That is
+the app's behaviour, and only the user can watch it; the command says so in as
+many words rather than implying the absence of ads has been proven.
+
+**🔧 Tool activity for this turn:** read `desktop/freebuff-adblock.sh`,
+`scripts/test-desktop.mjs`, `scripts/build.mjs`, `scripts/build-desktop.mjs` and
+the desktop section of `site/index.html`; added a `probes` mode to the embedded
+Perl engine and a `probe_hits` helper; added `orchestrator_pids`,
+`proc_start_epoch`, `proc_started_at`, `file_mtime`, `span_words`, `clock_words`,
+`ad_code_line`, `cmd_verify` and `verify_running`; edited `desktop/INSTALL.txt`,
+`site/index.html` (including the callout aside, which still listed a `post` anchor
+that no longer exists), `README.md`, `HANDOFF.md`; bumped
+`extension/manifest.json` to 1.4.2; ran the tool by hand against a fixture bundle
+before writing the tests, then `npm run build`, `npm test` ×4 and
+`npm run validate`.
+
+---
+
 <a id="appendix"></a>
 ## Current state appendix
 
 ### Version and artefacts
 
-- **App version: 1.4.0**, from `extension/manifest.json`. Nothing else in the
-  tree may carry a version of its own — `validate` enforces that.
-- Packages in `site/downloads/`: `freebuff-adblock-1.4.0.zip` (load unpacked),
-  `-1.4.0-store.zip` (Chrome Web Store / Edge Add-ons), `-1.4.0-firefox.zip`
-  (AMO), `freebuff-adblock-desktop-1.4.0.zip`, and the stable
-  `freebuff-adblock-desktop.sh`.
+- **App version: 1.4.2**, from `extension/manifest.json`. Nothing else in the
+  tree may carry a version of its own — `validate` enforces that. (This appendix
+  was written at 1.4.0 and was already a version behind at 1.4.1; the number here
+  follows the manifest, and no store upload has happened since 1.3.0.)
+- Packages in `site/downloads/`: `freebuff-adblock-1.4.2.zip` (load unpacked),
+  `-1.4.2-store.zip` (Chrome Web Store / Edge Add-ons), `-1.4.2-firefox.zip`
+  (AMO), `freebuff-adblock-desktop-1.4.2.zip`, and the stable
+  `freebuff-adblock-desktop.sh` (38.5 KB, `VERSION="1.4.2"`).
 
 ### What is live vs local
 
@@ -369,7 +464,7 @@ output is included for any turn.
 | addons.mozilla.org | **live**, extension 1.3.0 — needs the 1.4.0 upload |
 | Edge Add-ons | not submitted, so `STORE_LINKS.edge` is empty and Edge readers get no store button |
 | Live site | serving the **old** build (two-track tag, 1.3.0 zips) — needs a redeploy |
-| Local tree | one-version tag, 1.4.0 filenames, build/test/validate all green, **uncommitted** |
+| Local tree | one-version tag, 1.4.2 filenames, build/test/validate all green, **uncommitted** |
 
 ### Reproduce the verification
 
@@ -377,7 +472,7 @@ output is included for any turn.
 npm install --no-audit --no-fund     # no runtime dependencies
 npm i --no-save jsdom                # only for npm test
 npm run build                        # packages everything, emits dist/
-npm test                             # 58 content-script + 43 install-page + 57 desktop
+npm test                             # 58 content-script + 58 install-page + 104 desktop
 npm run validate                     # static checks the stores would otherwise fail on
 ```
 
@@ -387,8 +482,8 @@ npm run validate                     # static checks the stores would otherwise 
 2. `site/update.xml` still holds `YOUR_EXTENSION_ID_HERE` — the ID is known, but
    the feed also needs a signed CRX, and a store-installed extension updates via
    the store anyway.
-3. In 1.4.1, make the manifest description browser-neutral (it mentions Chromium
-   and Firefox; AMO accepted it but it reads oddly there).
+3. In the next version bump, make the manifest description browser-neutral (it
+   mentions Chromium and Firefox; AMO accepted it but it reads oddly there).
 4. Optional: a GitHub Actions workflow that tags a release and attaches the three
    built zips.
 
@@ -398,7 +493,11 @@ npm run validate                     # static checks the stores would otherwise 
   jsdom behaviour and fetched artefacts, never a screenshot.
 - The desktop patch tool has **never been run against a rebuilt Freebuff bundle**
   from this workspace: no bundle is available. That test is the user's to run
-  (`sh desktop/freebuff-adblock.sh scan`, then `install`).
+  (`sh desktop/freebuff-adblock.sh scan`, then `install`, then `verify`).
+- `verify` compares timestamps, so it inherits the clock's one-second resolution —
+  hence the two-second tolerance. It proves the running app loaded the patched
+  file; it cannot prove the ad gate was ever *reached*, which would need a beacon
+  written into the patch and tested against a real bundle.
 - The Chrome Web Store and AMO pages sit behind bot challenges, so the *published*
   version was inferred from the shipped packages, not read off the listings.
 - Nothing has been committed, pushed or deployed by the agent at any point.

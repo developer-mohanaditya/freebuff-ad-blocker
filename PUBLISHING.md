@@ -23,8 +23,8 @@ Some of these do not exist yet. The ones marked **MISSING** are what actually
 gates the first submission.
 
 - [x] Extension icon, 128×128 — `extension/icons/icon128.png`
-- [x] Flat package with `manifest.json` at the root — `freebuff-adblock-1.3.0-store.zip`
-- [x] Firefox package with the event-page background — `freebuff-adblock-1.3.0-firefox.zip`
+- [x] Flat package with `manifest.json` at the root — `freebuff-adblock-1.4.1-store.zip`
+- [x] Firefox package with the event-page background — `freebuff-adblock-1.4.1-firefox.zip`
 - [x] Small promo tile at **440×280** — `site/store-assets/promo-440x280.png`
 - [x] Marquee at **1400×560** (Chrome only, optional) — `site/store-assets/marquee-1400x560.png`
 - [x] Four screenshots at **1280×800** — `site/store-assets/screenshot-*.png`
@@ -71,7 +71,7 @@ five minutes:
    moved later.
 2. Accept the developer agreement and pay the **$5** registration fee. Turn on
    2FA for the account; the dashboard requires it.
-3. Click **Add new item**, upload `freebuff-adblock-1.3.0-store.zip`.
+3. Click **Add new item**, upload `freebuff-adblock-1.4.1-store.zip`.
 4. **Store listing** tab — name, short description, detailed description
    (copy is in the section at the bottom of this file), category, language,
    and the icon, screenshots and promo tile.
@@ -117,7 +117,7 @@ Free, but a separate account from Chrome. Same zip — no changes needed.
    (outlook.com / live.com / hotmail.com). Work or school accounts frequently
    cannot register for this program.
 2. In Partner Center, **Home → Workspaces → Edge → Create new extension**.
-3. Drag in `freebuff-adblock-1.3.0-store.zip`. Partner Center validates the
+3. Drag in `freebuff-adblock-1.4.1-store.zip`. Partner Center validates the
    manifest and reports errors immediately — fix and re-upload if it complains.
 4. **Availability** — Visibility **Public**, or **Hidden** to keep it out of
    search while still installable by link. Pick your markets.
@@ -155,14 +155,14 @@ package must not have, and the source `extension/manifest.json` stays clean.
    | **Listed** | public page on AMO, appears in search, installs from AMO |
    | **Unlisted / self-distribution** | AMO signs it, no public page. You host the signed `.xpi` |
 
-3. Upload `freebuff-adblock-1.3.0-firefox.zip` (rename to `.xpi` if you prefer —
+3. Upload `freebuff-adblock-1.4.1-firefox.zip` (rename to `.xpi` if you prefer —
    the bytes are identical). It should validate as **0 errors, 0 warnings, 0
    notices** across all five categories. To see that report before uploading,
    run the same linter AMO runs — no dependency is added to the project, this
    fetches it on the spot:
 
    ```
-   npx --yes addons-linter@10.13.0 site/downloads/freebuff-adblock-1.3.0-firefox.zip
+   npx --yes addons-linter@10.13.0 site/downloads/freebuff-adblock-1.4.1-firefox.zip
    ```
 4. Both channels go through **manual review**. Unlisted is usually signed
    quickly, but it is not automatic and can queue behind a queue. Do not plan
@@ -205,34 +205,45 @@ Settings → Environment and hand them over:
 
 ---
 
-## 4. After the first listing is approved
+## 4. After a listing is approved
 
-The site is already built to switch over automatically. Paste the listing URLs
-into `STORE_LINKS` at the top of `site/app.js`:
+The site switches over on its own. **Chrome and Firefox are done** — both URLs
+are already in `STORE_LINKS` at the top of `site/app.js`:
 
 ```js
 const STORE_LINKS = {
-  chrome: 'https://chromewebstore.google.com/detail/<slug>/<extension-id>',
-  edge: 'https://microsoftedge.microsoft.com/addons/detail/<slug>/<extension-id>',
-  firefox: 'https://addons.mozilla.org/firefox/addon/<slug>/',
+  chrome: 'https://chromewebstore.google.com/detail/hgkegdgnihnifjmgnihohlaemaafhlgm',
+  edge: '',   // not submitted yet, so an Edge reader gets no button
+  firefox: 'https://addons.mozilla.org/en-US/firefox/addon/freebuff-ad-block/',
 };
 ```
 
-Any store left empty keeps its button hidden, so this is safe to fill in one at
-a time. Then `npm run build` and redeploy. The hero button will read
-**Add to Chrome / Edge / Firefox** for whoever is looking at it, and the zip
-demotes to a "manual install" fallback.
+Any store left empty keeps its button hidden, so this is safe to fill in one at a
+time — and that blank `edge` is why Edge has no hero button today. Then
+`npm run build` and redeploy: the hero button reads **Add to Chrome / Edge /
+Firefox** for whoever is looking at it.
 
-`npm test` covers this: it loads the real page for each browser and checks the
-label, the link, and that the button is absent when there is no listing.
+The hero is only ever two buttons — the store button and **For Desktop**. The
+zip is not a third option: it lives in the first install step, which is where a
+browser with no listing finds its path.
+
+`npm test` covers all of it: it loads the real page for each browser and checks
+the label, the link, that a browser with no listing gets no button, and that the
+two live URLs are the ones actually shipped.
 
 ## 5. Shipping an update
 
-1. Bump `"version"` in `extension/manifest.json`.
-2. `npm run build && npm test && npm run validate`
-3. Upload the new zips. Stores review updates, then roll them out themselves —
+1. Bump `"version"` in `extension/manifest.json`. **That one number is the whole
+   release**: it renames the three browser packages, the desktop tool's package
+   and its own stamp, the update feed and the tag on the site. There is no second
+   version to bump, and nothing else to edit by hand — the build propagates it.
+2. Check the desktop tool still matches the current Freebuff build, since it
+   ships with the extension: `sh desktop/freebuff-adblock.sh scan` against the
+   installed app, and re-anchor if the report says an anchor moved.
+3. `npm run build && npm test && npm run validate`
+4. Upload the new zips. Stores review updates, then roll them out themselves —
    nothing to do on our side.
-4. If you self-host the Firefox `.xpi`, replace the file and keep the same
+5. If you self-host the Firefox `.xpi`, replace the file and keep the same
    filename pattern the build stamps in.
 
 ---

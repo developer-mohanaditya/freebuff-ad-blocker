@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { buildDesktop, DESKTOP_VERSION } from './build-desktop.mjs';
+import { buildDesktop } from './build-desktop.mjs';
 import { ensureIcons } from './png.mjs';
 import { createZip, walk } from './zip.mjs';
 
@@ -194,11 +194,11 @@ function writeUpdateXml(version, packageInfo) {
 /* ------------------------------------------------------------------ site dist */
 
 /**
- * Copy site/ into dist/ and stamp the version into index.html.
+ * Copy site/ into dist/ and stamp the versions into every page.
  * Substitutions are regexes over already-substituted values, so rebuilding
  * never drifts: run it twice and the output is identical.
  */
-function writeDist(version, packageInfo, storeInfo, firefoxInfo, desktop, desktopVersion) {
+function writeDist(version, packageInfo, storeInfo, firefoxInfo, desktop) {
   fs.rmSync(DIST_DIR, { recursive: true, force: true });
   fs.mkdirSync(DIST_DIR, { recursive: true });
 
@@ -223,24 +223,29 @@ function writeDist(version, packageInfo, storeInfo, firefoxInfo, desktop, deskto
         `href="${desktop.archive.relativePath}"`
       )
       .replace(/(<span data-version>)[^<]*(<\/span>)/g, `$1${version}$2`)
-      .replace(/(<span data-desktop-version>)[^<]*(<\/span>)/g, `$1${desktopVersion}$2`)
       .replace(/(<code data-download-path>)[^<]*(<\/code>)/g, `$1/${packageInfo.relativePath}$2`)
       .replace(
         /(<code data-desktop-command>)[^<]*(<\/code>)/g,
         `$1curl -fsSL ${SITE_ORIGIN}/${desktop.script.relativePath} | sh$2`
       );
 
-  const indexPath = path.join(DIST_DIR, 'index.html');
-  fs.writeFileSync(indexPath, stamp(fs.readFileSync(indexPath, 'utf8')));
+  // Every page, not just index.html. The navbar and footer carry the versions
+  // on the privacy page too, and that page keeping a literal 1.3.0 while the
+  // install page was relabelled is exactly how the site came to look stale.
+  const pages = fs.readdirSync(SITE_DIR).filter((name) => name.endsWith('.html'));
+  if (!pages.length) throw new Error('site/ has no HTML pages - nothing to stamp');
 
-  // Keep the source copy in sync too, so site/ is always directly serveable.
-  const sourceIndex = path.join(SITE_DIR, 'index.html');
-  const sourceHtml = fs.readFileSync(sourceIndex, 'utf8');
-  const stampedSource = stamp(sourceHtml);
-
-  if (stampedSource !== sourceHtml) {
-    fs.writeFileSync(sourceIndex, stampedSource);
-    log('stamped version into site/index.html');
+  for (const name of pages) {
+    // dist/ first: it is the copy hosting serves.
+    for (const dir of [DIST_DIR, SITE_DIR]) {
+      const file = path.join(dir, name);
+      const before = fs.readFileSync(file, 'utf8');
+      const after = stamp(before);
+      if (after === before) continue;
+      fs.writeFileSync(file, after);
+      // Keep the source copy in sync too, so site/ is always directly serveable.
+      if (dir === SITE_DIR) log(`stamped version into site/${name}`);
+    }
   }
 
   // Favicon for the install page, straight from the extension's own artwork.
@@ -251,6 +256,8 @@ function writeDist(version, packageInfo, storeInfo, firefoxInfo, desktop, deskto
     path.join(DIST_DIR, 'version.json'),
     `${JSON.stringify(
       {
+        // One number for the whole product: the extension, the desktop patch
+        // tool and every package filename all carry it.
         version,
         zip: packageInfo.relativePath,
         store: storeInfo ? storeInfo.relativePath : null,
@@ -278,11 +285,11 @@ export function build() {
 
   const { unpacked, store, firefox } = packageAll(version, manifest);
   writeUpdateXml(version, unpacked);
-  const desktop = buildDesktop({ version: DESKTOP_VERSION, origin: SITE_ORIGIN });
-  writeDist(version, unpacked, store, firefox, desktop, DESKTOP_VERSION);
+  const desktop = buildDesktop({ version, origin: SITE_ORIGIN });
+  writeDist(version, unpacked, store, firefox, desktop);
 
   log(`v${version} - ${unpacked.fileCount} files, ${formatBytes(unpacked.bytes)}`);
-  log(`desktop  Freebuff Desktop patch tool v${DESKTOP_VERSION}   (extension v${version})`);
+  log(`desktop  patch tool ships as the same v${version}`);
   log(`package  site/${unpacked.relativePath}   (load unpacked, Chromium)`);
   log(`package  site/${store.relativePath}   (Chrome Web Store, Edge Add-ons)`);
   log(`package  site/${firefox.relativePath}   (addons.mozilla.org)`);

@@ -34,17 +34,17 @@ if ('IntersectionObserver' in window && revealables.length) {
 /* ---------------------------------------------------------------- store links */
 
 /**
- * Store listings. Paste a listing URL in when it goes live. A browser whose
- * store is still empty gets no button, so the page can never show a dead link.
+ * Store listings.
  *
- * The zip stays regardless. It is the only path that works before a listing
- * exists, the only one that needs no review, and the only one that reaches a
- * browser with no store of its own.
+ * A browser whose store is still empty gets no button, so the page can never
+ * show a dead link. `edge` is empty because Edge Add-ons has not been submitted
+ * to yet - an Edge reader falls back to the manual path in `#install`, and this
+ * lights up the moment a listing URL is pasted in.
  */
 const STORE_LINKS = {
-  chrome: '',
+  chrome: 'https://chromewebstore.google.com/detail/hgkegdgnihnifjmgnihohlaemaafhlgm',
   edge: '',
-  firefox: '',
+  firefox: 'https://addons.mozilla.org/en-US/firefox/addon/freebuff-ad-block/',
 };
 
 /**
@@ -147,54 +147,132 @@ if (storeButton) {
   const url = browser.store ? STORE_LINKS[browser.store] : '';
 
   if (!url) {
-    // No listing for this browser yet, so the zip below is the honest path.
+    // No listing for this browser, so the button is removed rather than left
+    // pointing somewhere useless. The manual path in #install still works.
     storeButton.remove();
   } else {
     storeButton.textContent = `Add to ${browser.name}`;
     storeButton.href = url;
     storeButton.rel = 'noopener';
     storeButton.hidden = false;
-
-    // With a one-click install on offer, the zip is the fallback rather than
-    // the headline - so it steps back and says what it is.
-    document.querySelectorAll('[data-zip]').forEach((el) => {
-      el.classList.replace('btn-primary', 'btn-ghost');
-      const meta = el.querySelector('.btn-meta');
-      if (meta) meta.textContent = 'manual install';
-    });
   }
+}
+
+/* --------------------------------------------------------------- platforms */
+
+/**
+ * The desktop section's platform switch.
+ *
+ * A platform with no build yet carries `disabled` in the markup, so a click
+ * listener never fires for it - Windows and Linux are shown, greyed and inert
+ * on purpose. This only does the switching; adding a build means adding its
+ * `data-platform-panel` block and dropping the `disabled` attribute, with no
+ * change here.
+ */
+const platformTabs = document.querySelectorAll('[data-platform]');
+const platformPanels = document.querySelectorAll('[data-platform-panel]');
+
+if (platformTabs.length && platformPanels.length) {
+  const selectPlatform = (name) => {
+    platformTabs.forEach((tab) => {
+      const active = tab.dataset.platform === name;
+      tab.classList.toggle('is-active', active);
+      tab.setAttribute('aria-selected', String(active));
+    });
+
+    platformPanels.forEach((panel) => {
+      panel.hidden = panel.dataset.platformPanel !== name;
+    });
+  };
+
+  platformTabs.forEach((tab) => {
+    tab.addEventListener('click', () => selectPlatform(tab.dataset.platform));
+  });
 }
 
 /* ----------------------------------------------------------------- copy path */
 
-const copyButton = document.querySelector('[data-copy]');
+/**
+ * Every copy button on the page, not just the first one.
+ *
+ * The page has two - the download path in install step 1 and the desktop
+ * one-liner in the desktop section - and `document.querySelector` bound only the
+ * first, so the desktop command's button was inert: it had no listener at all.
+ */
+const copyButtons = document.querySelectorAll('[data-copy]');
 
-if (copyButton) {
-  copyButton.addEventListener('click', async () => {
-    const code = copyButton.parentElement.querySelector('code');
+/** Select the code, then use the one copy route that works without a secure context. */
+function copyBySelection(code) {
+  const range = document.createRange();
+  range.selectNodeContents(code);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+
+  try {
+    return document.execCommand('copy');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Show the outcome, then put the label back.
+ *
+ * The label to restore is passed in rather than read off the button, and a
+ * pending timer is cancelled first: a second click inside the flash window would
+ * otherwise capture "Copied" as the original and leave the button lying about
+ * what it does.
+ */
+const flashes = new WeakMap();
+
+function flash(button, label, text, state) {
+  clearTimeout(flashes.get(button));
+  button.textContent = text;
+  button.dataset.state = state;
+
+  flashes.set(
+    button,
+    setTimeout(() => {
+      button.textContent = label;
+      delete button.dataset.state;
+    }, 1600)
+  );
+}
+
+const isMac = /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent || '');
+
+for (const button of copyButtons) {
+  const label = button.textContent;
+
+  button.addEventListener('click', async () => {
+    const row = button.closest('.copy-row') || button.parentElement;
+    const code = row ? row.querySelector('code') : null;
     const value = code ? code.textContent.trim() : '';
     if (!value) return;
 
-    try {
-      await navigator.clipboard.writeText(value);
-    } catch {
-      // Clipboard API unavailable (non-secure context) - fall back to selection.
-      const range = document.createRange();
-      range.selectNodeContents(code);
-      const selection = window.getSelection();
-      selection.removeAllRanges();
-      selection.addRange(range);
-      return;
+    let copied = false;
+
+    // `navigator.clipboard` is only defined in a secure context, and it can
+    // still reject (a denied permission, an unfocused document). The selection
+    // route below is the normal path on plain http - which is how the preview is
+    // served - not an edge case, and it must stay synchronous: execCommand needs
+    // the user gesture, which an awaited clipboard call would have spent.
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(value);
+        copied = true;
+      } catch {
+        copied = false;
+      }
     }
 
-    const original = copyButton.textContent;
-    copyButton.textContent = 'Copied';
-    copyButton.dataset.state = 'done';
+    if (!copied) copied = copyBySelection(code);
 
-    setTimeout(() => {
-      copyButton.textContent = original;
-      delete copyButton.dataset.state;
-    }, 1600);
+    // The text is selected either way, so the honest label is which key to press.
+    copied
+      ? flash(button, label, 'Copied', 'done')
+      : flash(button, label, isMac ? 'Press ⌘C' : 'Press Ctrl+C', 'warn');
   });
 }
 
@@ -212,11 +290,15 @@ async function reconcileVersion() {
     const data = await response.json();
     if (!data || !data.version) return;
 
+    // Every stamp on the page carries the one app version - the tag, the zip
+    // meta and the footer all name the same number as the file names.
     document.querySelectorAll('[data-version]').forEach((el) => {
       el.textContent = data.version;
     });
 
-    const download = document.querySelector('a[download]');
+    // The zip is the manual path in #install, not a second hero button, so it
+    // is matched by its own hook rather than as "the first download link".
+    const download = document.querySelector('[data-zip]');
     if (download && data.zip) download.setAttribute('href', data.zip);
 
     // The desktop tool has its own downloads and its own one-liner. They are

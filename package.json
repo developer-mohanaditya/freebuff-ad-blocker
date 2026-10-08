@@ -1,6 +1,6 @@
 {
   "name": "freebuff-ad-block",
-  "version": "1.3.0",
+  "version": "1.4.1",
   "private": true,
   "type": "module",
   "description": "Chromium MV3 extension that blocks ads on freebuff.com, plus a macOS patch tool that blocks them in the Freebuff desktop app.",

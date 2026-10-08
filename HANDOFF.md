@@ -23,29 +23,39 @@ Licence: MIT.
 
 ## Where things stand
 
-- **Chrome Web Store** — accepted and live.
-- **addons.mozilla.org** — version 1.3.0 submitted, awaiting review.
-- **Edge Add-ons** — not submitted.
-- **Install page** — live, with the desktop section added.
-- **Desktop tool** — committed and pushed in `7d7cef8`, then updated here to
-  v1.4.0 and verified locally (57 checks). **The 1.4.0 change set is uncommitted**
-  (`git status --porcelain` lists it) and the site has not been redeployed, so
-  the live one-liner still serves 1.3.0 until both happen.
-- **Desktop tool v1.4.0** — anchors now have a relaxed form, `scan` reports what
-  an installed build actually contains, and a write made through a relaxation is
-  undone if the check afterwards disagrees. This is the release that makes a
-  Freebuff rebuild survivable. Its version is **independent of the extension's**
-  (`scripts/build-desktop.mjs` → `DESKTOP_VERSION`), so the tool can ship without
-  a browser-store submission: the desktop zip is 1.4.0 while the extension stays
-  1.3.0. The tool has not been run against the rebuilt app yet — no bundle to
-  inspect from the cloud workspace.
+- **Chrome Web Store** — live: `hgkegdgnihnifjmgnihohlaemaafhlgm`.
+- **addons.mozilla.org** — live: `freebuff-ad-block`.
+- **Edge Add-ons** — not submitted, so `STORE_LINKS.edge` stays empty and an Edge
+  reader gets no store button. Submitting it is free and lights the button up.
+- **Install page** — live, with the desktop section added, the two store listings
+  wired into the hero, and a three-way platform switch in the desktop section
+  (macOS selectable; Windows and Linux `disabled` until a build exists).
+- **Desktop tool, re-anchored for Freebuff Desktop 0.0.164 (unreleased).**
+  0.0.164 dropped one of the two render gates (`displayAd` is gone; `auction`'s
+  gate remains, once) and the ad client grew to ten `/api/v1/ads/*` endpoints,
+  all reached through a single `request` helper. The anchors now say exactly
+  that: `render` expects **1**, `request` matches the ad client's own signature,
+  and the old `post` anchor is **gone** — in 0.0.164 it matched the break-event
+  telemetry poster and the `/api/logs` shipper, so it could only break logging
+  while blocking no ads. Verified against fixtures built from the windows
+  0.0.164's own `scan` printed, decoys included.
+- **One version for the whole product: v1.4.1, not yet deployed.** The extension
+  and the desktop tool are inspected and released together, so
+  `extension/manifest.json` is the only version there is: it names the three
+  browser packages, the desktop package and the tool's own stamp, `update.xml`
+  and the tag on the site (navbar, footer, zip meta). There is no
+  `DESKTOP_VERSION` any more, and no `desktopVersion` in `version.json`. It is
+  1.4.1 rather than 1.4.0 because the **live** one-liner already serves a 1.4.0
+  that cannot patch 0.0.164: one number for two different tools is the drift the
+  single version exists to prevent. The live site still serves the older build,
+  and the stores are still on 1.3.0, so their first upload can simply be 1.4.1.
 
 Last verified, in this order, on the tree being handed off:
 
 ```
 npm run build     # ok — 3 extension zips + desktop tool + desktop zip + dist/
 npm run validate  # "All extension checks passed."  (exit 0)
-npm test          # 58 content-script + 18 install-page + 57 desktop checks pass  (exit 0)
+npm test          # 58 content-script + 58 install-page + 81 desktop checks pass  (exit 0)
 ```
 
 `npm run build` is safe to re-run: it overwrites `dist/` and the four zips, and
@@ -67,36 +77,57 @@ npm run validate                   # static checks that the stores would otherwi
 
 ## Open items
 
-1. **Commit and push the 1.4.0 change set, then redeploy the site.** HEAD is
-   `7d7cef8`, which already carries the desktop tool as it was in 1.3.0. What is
-   uncommitted now is this update: `desktop/freebuff-adblock.sh`,
-   `desktop/INSTALL.txt`, `scripts/build-desktop.mjs`, `scripts/build.mjs`,
-   `scripts/test-desktop.mjs`, `site/index.html`, `README.md`, this file, and the
-   rebuilt `site/downloads/` (the 1.3.0 desktop zip is deleted, the 1.4.0 one is
-   new and untracked). Until the site is redeployed, the live one-liner still
-   serves a 1.3.0 tool — which is the version that cannot survive a renamed
-   anchor. After the push, redeploy so the stamped `desktop` / `desktopZip` /
-   `origin` fields reach `version.json`.
-2. **Paste the listing URLs into `site/app.js` → `STORE_LINKS`.** Chrome's store
-   URL is the one that matters today; `chrome` is still an empty string, so the
-   hero shows the developer-install path even though the listing is live. Set
-   `firefox` when AMO approves, and `edge` if Edge is submitted.
-3. **`site/update.xml` still contains `YOUR_EXTENSION_ID_HERE`.** The auto-update
-   feed is inert until the packed extension's real ID goes in and `codebase`
-   points at a signed CRX. README explains why an unpacked extension never polls
-   it regardless.
-4. **1.3.1: make the manifest description browser-neutral.** The current one
-   mentions Chromium and Firefox; AMO accepted it but it reads oddly there.
-5. **Optional:** a GitHub Actions workflow that tags a release and attaches the
+1. **Submit to Edge Add-ons, then paste the URL into `STORE_LINKS.edge`.** Free,
+   and it is the one browser that currently gets no hero button: `edge` is an
+   empty string, and the button is removed rather than pointed at the Chrome Web
+   Store, because an Edge reader clicking "Add to Edge" into Google's store is
+   worse than no button. Everything else is wired — see `STORE_LINKS` for the two
+   that are live.
+2. **`site/update.xml` still contains `YOUR_EXTENSION_ID_HERE`.** The ID is now
+   known — `hgkegdgnihnifjmgnihohlaemaafhlgm`, from the Chrome Web Store URL — but
+   the feed also needs `codebase` to point at a signed CRX, and a store-installed
+   extension is updated by the store anyway. So the placeholder stays until the
+   self-hosted/forcelist route is actually wanted. README explains why an unpacked
+   extension never polls it regardless.
+3. **In 1.4.1, make the manifest description browser-neutral.** The current one
+   mentions Chromium and Firefox; AMO accepted it but it reads oddly there. It is
+   a manifest field, so it needs the version bump to reach the stores - the rest
+   of a release needs none.
+4. **Optional:** a GitHub Actions workflow that tags a release and attaches the
    three built zips, so a version bump is one push instead of a manual upload.
    Needs a `GITHUB_TOKEN` secret in the repo. Not started.
 
 ## Traps worth remembering
 
+- **Re-anchoring is a report plus a count, and it never needs the 9 MB bundle.**
+  A build whose anchors moved reads `ambiguous` (the shape exists, the count does
+  not) or `not found`, and the tool writes nothing. Get the report from the
+  installed app itself, then the counts that decide the anchor:
+
+  ```sh
+  curl -fsSL <origin>/downloads/freebuff-adblock-desktop.sh | sh -s scan
+  grep -c '<candidate anchor text>' <orchestrator.js>
+  grep -o 'async request([^)]*)' <orchestrator.js> | sort | uniq -c
+  ```
+
+  The piped form is the one to give anyone who ran the one-liner install: they
+  have no local copy of the script, so `sh freebuff-adblock.sh scan` cannot work
+  for them. `sh -s scan` passes `scan` through as the command; that path is now
+  covered by a test, not just a promise in the docs.
+
+  **Worked example — 0.0.164.** `render` went 2 → 1, because the `displayAd` gate
+  is gone. `request` was re-pointed at the ad client's own signature, which is
+  unique among the seven `async request(` definitions in that build, and matched
+  name-agnostically in its second argument because that local is minifier output
+  (`path27`). `post` was **deleted rather than re-pointed**: both of its matches
+  are non-ad helpers. The rule that came out of it: never point an anchor at a
+  literal that matches two unrelated things, because a count cannot tell you
+  which one you meant.
 - **The desktop patch anchors move between Freebuff releases.** The originals
-  were found and verified against Freebuff Desktop **0.0.155**; `1.4.0` can also
-  match a renamed gate or helper, but only when it appears the expected number of
-  times *and* ad code sits within 320 bytes of every hit. On a rebuilt app:
+  were found and verified against Freebuff Desktop **0.0.155**. Since our own
+  v1.4.0 the tool can also match a renamed gate or helper, but only when it
+  appears the expected number of times *and* ad code sits within 320 bytes of
+  every hit. On a rebuilt app:
 
   ```sh
   sh desktop/freebuff-adblock.sh scan     # what this build has - writes nothing
@@ -109,6 +140,13 @@ npm run validate                   # static checks that the stores would otherwi
   code plus counts for stable tokens.  Send that file rather than a screenshot.
   A legacy hand patch leaves no markers, so a zero-anchor `status` there means
   "restore the pristine file first", not "the tool is broken".
+- **The version tag is on every page, and it is one number.** `site/privacy.html`
+  once kept a stale literal after the install page had been updated, which is why
+  the build now stamps every `.html` in `site/` and `npm run validate` fails if a
+  page hardcodes a version in its navbar or footer, drops the stamp, or offers a
+  download whose filename is not the current version. The tag, the file names and
+  `update.xml` all come from `extension/manifest.json`: bumping it is the whole
+  release, and no page, package or script may carry a version of its own.
 - **`TEST_AGENTIC_ADS` is a trap.** The env-var route into the app's test ads
   throws unless `NODE_ENV !== "production"` *and* the environment is `dev`, and
   it is called at module load, so setting it crashes the app instead of
@@ -176,11 +214,10 @@ npm run validate                   # static checks that the stores would otherwi
 
 1. `npm install --no-audit --no-fund`
 2. `npm run build && npm run validate && npm test` — clean on a fresh clone of
-   `7d7cef8` plus jsdom; the 1.4.0 tool changes need committing before that stays
-   true for the current tree
+   `56c6407` plus jsdom (58 content-script + 58 install-page + 81 desktop)
 3. `npm run preview` and click through `/` — hero, `#install`, `#desktop`,
    `#updates`, `/privacy`
-4. Close open item 1, then 2
+4. Close open item 1 (the Edge listing) when it is worth $0 and twenty minutes
 5. Run `sh desktop/freebuff-adblock.sh scan` against the current desktop build,
    then `install`. `scan` writes nothing, so it is the safe first move on a
    build the tool has not seen.

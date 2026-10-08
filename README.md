@@ -20,9 +20,17 @@ nothing to configure.
 
 ## Install
 
-Neither Chromium nor Firefox will install an unsigned extension from a link, so
-until the store listings are live the path is loading the extracted folder as a
-developer extension. It behaves exactly like an installed one — in Chromium it
+Both listings are live:
+[Chrome Web Store](https://chromewebstore.google.com/detail/hgkegdgnihnifjmgnihohlaemaafhlgm)
+for Chrome, Edge, Brave, Opera, Vivaldi and every other Chromium browser, and
+[addons.mozilla.org](https://addons.mozilla.org/en-US/firefox/addon/freebuff-ad-block/)
+for Firefox. The hero button works out which of the two is reading the page and
+points at the store that serves it, so it reads **Add to Chrome** or **Add to
+Firefox** and nothing else. A browser with no listing — Edge today, Safari ever —
+gets no button rather than a dead one.
+
+The manual path stays for the cases a store cannot serve, and for reviewing the
+package itself. It behaves exactly like an installed one — in Chromium it
 persists, in Firefox a temporary add-on lasts until the browser restarts.
 
 **Chromium** (Chrome, Edge, Brave, Opera, Vivaldi, Comet…)
@@ -41,9 +49,9 @@ persists, in Firefox a temporary add-on lasts until the browser restarts.
 2. **Load Temporary Add-on** → pick `manifest.json` inside the extracted
    Firefox zip.
 
-Once a listing exists, the install page's hero button works out which browser is
-reading it and points at the store that serves that browser — no wrong-store
-links, and no button at all for a browser that cannot install it.
+The hero is two buttons and stays that way: the store button above, and **For
+Desktop** for the desktop app's section. The zip is not a third hero option — it
+lives in the first install step, where a browser with no listing finds it.
 
 ## Why three layers
 
@@ -120,6 +128,13 @@ Freebuff Desktop renders its ads from a runtime it ships inside its own bundle �
 That file is not in `app.asar`, and no browser extension can reach it, so the
 desktop app needs a different tool rather than a different rule.
 
+**macOS is the only build.** The install page's desktop section carries a
+three-way platform switch — For macOS, For Windows, For Linux — and the latter
+two are `disabled` in the markup: shown, greyed and unclickable rather than
+hidden, because a missing tab reads as a missing feature. Shipping a second
+platform means adding its `data-platform-panel` block and dropping that
+attribute; the switch itself needs no change.
+
 `desktop/freebuff-adblock.sh` is that tool. One file, no dependencies — macOS
 already ships the `sh` and `perl` it uses:
 
@@ -133,13 +148,22 @@ sh freebuff-adblock.sh revert    # restore the untouched original
 sh freebuff-adblock.sh doctor    # environment report, for a bug report
 ```
 
-It edits only the ad code, in four counted places:
+It edits only the ad code, at two counted anchors:
 
 | Patch | Anchors | What it does |
 | --- | --- | --- |
-| `render` | 2 | forces `displayAd()` and `auction()` to return "nothing to show" |
-| `post` | 1 | the ad API helper returns a failure before it sends |
-| `request` | 1 | the same, for the web-host ad helper |
+| `render` | 1 | forces the gate the ad auction consults to return "no ads to show" |
+| `request` | 1 | the ad client's own request helper fails before it sends, so nothing at `/api/v1/ads/*` is reachable |
+
+There is deliberately **no `post` patch any more**. The 0.0.155 tool had one, for
+an ad helper that no longer exists: in 0.0.164 `async post(...)` matches the ad
+break-event telemetry poster and the shipper that POSTs to `${API_HOST}/api/logs`,
+so patching it would break Freebuff's own logging and block no ads. The `request`
+anchor already stops the ad API from being reached.
+
+0.0.155 also had two render gates (`displayAd` + `auction`); the `displayAd` one
+is gone from **0.0.164**, which is the build the current anchors were verified
+against. An older build with both gates is now refused rather than half-patched.
 
 The safety story is the counting. Every anchor has to appear the exact number of
 times the tool expects before it writes anything; a Freebuff version that renamed
@@ -157,10 +181,12 @@ so a similarly shaped feature gate elsewhere in the bundle is never mistaken for
 the ad render path. A write made through a relaxation is re-counted immediately
 afterwards, and if the result disagrees the pristine copy goes straight back.
 
-The tool also carries its own version, separate from the extension's: how the
-desktop bundle gets patched changes on Freebuff's release cycle, not on a
-browser store's. `1.4.0` is the version that introduced relaxed anchors and
-`scan`.
+Everything under this product ships under **one version**. The extension and the
+desktop tool are inspected together and released together, so the number in
+`extension/manifest.json` names the browser packages, the desktop tool and its
+package, the update feed and the tag on the site. `1.4.0` introduced relaxed
+anchors and `scan`; **`1.4.1` is the release re-anchored for Freebuff Desktop
+0.0.164**, which dropped one of the two render gates and moved the ad helpers.
 
 When a patch still reports `not found`, that is the new build telling you where
 it is: `scan` prints every candidate site it can see for each anchor — literal
@@ -269,7 +295,8 @@ desktop/            the macOS patch tool for the desktop app
 site/               the install page and everything it serves
   index.html          markup; the version is stamped in at build time
   styles.css
-  app.js              store-button detection; paste listing URLs into STORE_LINKS
+  app.js              store-button detection (listing URLs in STORE_LINKS)
+                      + the desktop section's platform switch
   privacy.html        the policy both stores link to
   store-assets/       the listing art
   downloads/          the built zips

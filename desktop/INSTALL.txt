@@ -52,21 +52,28 @@ install again after an update.
 An update can also change the code the tool looks for. Each anchor has a
 literal form and a relaxed one; the relaxed form is only used when it appears
 the expected number of times AND ad code sits beside it, and the write is
-undone if the check afterwards disagrees. If a patch still reports "not found",
-the new build moved it - run:
+undone if the check afterwards disagrees. When an anchor does not fit, install
+refuses and prints the counts it saw - "render ambiguous, literal: 2 match(es)"
+- so you can see whether the shape changed or only the number of times it
+appears. To get the full report:
 
-  sh freebuff-adblock.sh scan
+  sh freebuff-adblock.sh scan                     (a local copy of the tool)
 
-which lists every candidate site it can see, writes a copy to your backup
-folder, and touches nothing inside the app.
+  curl -fsSL __FBD_ORIGIN__/downloads/freebuff-adblock-desktop.sh | sh -s scan
+
+Both list every candidate site the build has, write a copy to your backup
+folder, and touch nothing inside the app. The piped one is for when you ran the
+one-liner above and have no local copy to point at.
 
 WHAT IT DOES
 ------------
 
 It only touches the ad code in
-Contents/Resources/orchestrator/orchestrator.js. It forces the two ad render
-entry points to return "nothing to show", and makes the two request helpers
-that talk to the ad API give up before they send. Nothing else changes.
+Contents/Resources/orchestrator/orchestrator.js. It forces the gate the ad
+auction consults to return "no ads to show", and makes the ad client's own
+request helper fail before it sends, so none of the /api/v1/ads/* calls can be
+reached. Nothing else changes - in particular the log shipper that posts to
+/api/logs is left alone.
 
 It refuses to run unless every anchor it expects is found the exact number of
 times it expects, so a Freebuff version that renames something fails safe and

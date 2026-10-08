@@ -24,7 +24,12 @@
           </svg>
         </span>
         <span class="brand-name">Freebuff Ad Block</span>
-      </a>        <span class="pill">v<span data-version>1.3.0</span></span>
+      </a>
+      <!-- One product, one version. The extension and the desktop patch tool are
+           inspected and released together, so this tag carries the same number
+           as every file name in downloads/ - the extension zips and the desktop
+           package all read <version>, and this is the only version there is. -->
+      <span class="pill">v<span data-version>1.4.1</span></span>
     </header>
 
     <main>
@@ -32,7 +37,7 @@
       <section class="hero">
         <p class="eyebrow">Chrome · Edge · Brave · Firefox</p>
         <h1>
-          The ads stop.<br />
+          The ads disappear.<br />
           <span class="accent">The build keeps streaming.</span>
         </h1>
         <p class="lede">
@@ -43,16 +48,13 @@
         </p>
 
         <div class="cta-row">
-          <!-- app.js names the browser it is being read in and points the link at
-               the store that serves it. Kept hidden until that listing exists. -->
+          <!-- One button, two stores. app.js names the browser reading this page
+               and points the link at the store that serves it: the Chrome Web
+               Store for every Chromium browser, addons.mozilla.org for Firefox.
+               Kept hidden until it knows, so a browser with no listing never
+               sees a button that leads nowhere. -->
           <a class="btn btn-primary" data-store-button hidden>Add to Chrome</a>
-          <!-- Kept either way: the only path that works before a listing exists. -->
-          <a class="btn btn-primary" data-zip href="downloads/freebuff-adblock-1.3.0.zip" download>
-            Download extension
-            <span class="btn-meta">v<span data-version>1.3.0</span> · zip</span>
-          </a>
-          <a class="btn btn-ghost" href="#install">How to install</a>
-          <a class="btn btn-ghost" href="#desktop">Desktop app</a>
+          <a class="btn btn-ghost" href="#desktop">For Desktop</a>
         </div>
 
         <ul class="facts" role="list">
@@ -180,8 +182,14 @@
                 Chrome will report the extension as unloaded and you will need to point it at the
                 new path again.
               </p>
+              <p>
+                <a class="btn btn-primary" data-zip href="downloads/freebuff-adblock-1.4.1.zip" download>
+                  Download extension
+                  <span class="btn-meta">v<span data-version>1.4.1</span> · zip</span>
+                </a>
+              </p>
               <div class="copy-row">
-                <code data-download-path>/downloads/freebuff-adblock-1.3.0.zip</code>
+                <code data-download-path>/downloads/freebuff-adblock-1.4.1.zip</code>
                 <button type="button" class="copy" data-copy>Copy</button>
               </div>
             </div>
@@ -235,7 +243,7 @@
               shared — the same ruleset, the same content script, the same popup.
             </p>
             <p>
-              <a href="downloads/freebuff-adblock-1.3.0-firefox.zip" download>Download the Firefox
+              <a href="downloads/freebuff-adblock-1.4.1-firefox.zip" download>Download the Firefox
               package</a>, then open <code>about:debugging#/runtime/this-firefox</code>, choose
               <strong>Load Temporary Add-on</strong>, and select <code>manifest.json</code> from
               the folder you extracted. A temporary add-on lasts until Firefox restarts — a build
@@ -324,7 +332,48 @@
           </p>
         </div>
 
-        <div class="split">
+        <!-- The switch is a segmented control: one platform's content is on
+             screen at a time. macOS is the only build so far, so the other two
+             carry `disabled` - shown, greyed and unclickable rather than hidden,
+             because a missing tab reads as a missing feature. Drop the attribute
+             and add its `data-platform-panel` block when a build ships. -->
+        <div class="platform-switch reveal" role="tablist" aria-label="Desktop platform">
+          <button
+            type="button"
+            class="platform-tab is-active"
+            role="tab"
+            aria-selected="true"
+            data-platform="macos"
+          >
+            For macOS
+          </button>
+          <button
+            type="button"
+            class="platform-tab"
+            role="tab"
+            aria-selected="false"
+            data-platform="windows"
+            disabled
+          >
+            For Windows
+          </button>
+          <button
+            type="button"
+            class="platform-tab"
+            role="tab"
+            aria-selected="false"
+            data-platform="linux"
+            disabled
+          >
+            For Linux
+          </button>
+        </div>
+        <p class="fine platform-note">
+          macOS is the only build so far. Windows and Linux are listed ahead of the tools,
+          so the switch is ready the moment they ship.
+        </p>
+
+        <div class="split" data-platform-panel="macos">
           <div class="panel reveal">
             <h3>Run it</h3>
             <p>
@@ -337,7 +386,7 @@
               <button type="button" class="copy" data-copy>Copy</button>
             </div>
             <p class="fine">
-              Prefer a file? <a data-desktop-zip href="downloads/freebuff-adblock-desktop-1.4.0.zip" download>Download
+              Prefer a file? <a data-desktop-zip href="downloads/freebuff-adblock-desktop-1.4.1.zip" download>Download
               the tool</a> — a zip with a double-clickable launcher and a short read-me — then run
               <code>sh freebuff-adblock.sh install</code>.
             </p>
@@ -347,11 +396,14 @@
               <code>sh freebuff-adblock.sh revert</code>.
             </p>
             <p class="fine">
-              Tool v<span data-desktop-version>1.4.0</span>. It matches each anchor beside the ad
-              code, not just by name, and undoes its own write if the result does not check out. If
-              a Freebuff release moves something it cannot recognise, it says so instead of
-              guessing — <code>sh freebuff-adblock.sh scan</code> then prints what the installed
-              build actually contains, and changes nothing.
+              Tool v<span data-version>1.4.1</span>, anchored against Freebuff Desktop
+              <strong>0.0.164</strong>: it forces the ad auction to return nothing and cuts the ad
+              client off from its API, and it undoes its own write if the result does not check
+              out. If a Freebuff release moves something it cannot recognise, it refuses and
+              prints the counts it saw instead of guessing — and
+              <code>sh freebuff-adblock.sh scan</code> prints what the installed build actually
+              contains, changing nothing. An older Freebuff with a different arrangement is
+              refused, not half-patched.
             </p>
           </div>
 
@@ -422,7 +474,7 @@
             Two apps, two tools, one idea. The <strong>web version</strong> is covered by the
             extension above, which a browser can only reach because Chromium renders the page. The
             <strong>desktop app</strong> is a separate bundle with no extension surface, so it is
-            covered by the local tool in <a href="#desktop">Desktop app</a> instead. Neither has a
+            covered by the local tool in <a href="#desktop">For Desktop</a> instead. Neither has a
             server, an account or a telemetry endpoint, and neither touches anything outside
             freebuff.com and your own machine.
           </p>
@@ -432,7 +484,7 @@
 
     <footer class="footer">
       <p>
-        Freebuff Ad Block · v<span data-version>1.3.0</span> · site-scoped, no accounts, no
+        Freebuff Ad Block · v<span data-version>1.4.1</span> · site-scoped, no accounts, no
         telemetry.
       </p>
       <p class="fine">

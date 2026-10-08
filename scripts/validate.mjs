@@ -571,6 +571,24 @@ function checkStoreButtons() {
   const known = [...linksBlock.matchAll(/^\s*([a-z]+):/gm)].map((m) => m[1]);
   pass(`stores that can be linked: ${known.join(', ')}`);
 
+  // The two listings that are live. An emptied value does not break anything
+  // visible - the button is simply removed on load - so it has to be asserted
+  // here or a live store silently stops being reachable from the page.
+  const listing = (store) => {
+    const match = linksBlock.match(new RegExp(`^\\s*${store}:\\s*'([^']*)'`, 'm'));
+    return match ? match[1] : null;
+  };
+
+  const chromeListing = listing('chrome');
+  if (chromeListing?.startsWith('https://chromewebstore.google.com/'))
+    pass('the Chrome Web Store listing is linked');
+  else fail(`STORE_LINKS.chrome is "${chromeListing}" - every Chromium reader would get no button`);
+
+  const firefoxListing = listing('firefox');
+  if (firefoxListing?.startsWith('https://addons.mozilla.org/'))
+    pass('the addons.mozilla.org listing is linked');
+  else fail(`STORE_LINKS.firefox is "${firefoxListing}" - Firefox would get no button`);
+
   // Every browser in the detection table must name a store that exists. One bad
   // key and that browser silently gets no button, however the URL is filled in.
   const browsersAt = app.indexOf('const BROWSERS');
@@ -602,6 +620,112 @@ function checkStoreButtons() {
       ? pass(`${name} named in the user-agent fallback`)
       : fail(`${name} dropped from the fallback table - its button would say Chrome`);
   }
+}
+
+/* ---------------------------------------------------------- version labels */
+
+/**
+ * Two artifacts ship from this site on different clocks: the extension follows
+ * browser-store review, the desktop tool follows Freebuff's release cycle. So
+ * every version shown anywhere has to say which one it is.
+ *
+ * The bug this exists for: site/privacy.html kept a bare `v1.3.0` in its navbar
+ * and footer after the install page had been relabelled, so the site still read
+ * as stale on the one page nobody thought to look at. Checked per page rather
+ * than on index.html alone, so a new page cannot ship unlabelled either.
+ */
+function checkVersionLabels(manifest) {
+  console.log('\nversion labels');
+
+  const SITE = path.join(ROOT, 'site');
+  const pages = fs.readdirSync(SITE).filter((name) => name.endsWith('.html')).sort();
+  const version = manifest.version;
+
+  if (!pages.length) {
+    fail('site/ has no HTML pages');
+    return;
+  }
+
+  for (const page of pages) {
+    const source = fs.readFileSync(path.join(SITE, page), 'utf8');
+    // Flatten whitespace: the markup wraps, and a reflow must not fail a check.
+    const html = source.replace(/\s+/g, ' ');
+
+    const pillAt = html.indexOf('<span class="pill">');
+    const pill = pillAt === -1 ? '' : html.slice(pillAt, html.indexOf('</header>', pillAt));
+    const footerAt = html.indexOf('<footer class="footer">');
+    const footer =
+      footerAt === -1 ? '' : html.slice(footerAt, html.indexOf('</footer>', footerAt));
+
+    const missing = [];
+    if (!/v<span data-version>/.test(pill)) missing.push('the navbar tag is not a version stamp');
+    if (!footer.includes('Freebuff Ad Block · v<span data-version>'))
+      missing.push('the footer does not carry the version stamp');
+
+    if (missing.length) {
+      for (const problem of missing) fail(`site/${page}: ${problem}`);
+    } else {
+      pass(`site/${page} carries the version tag in the navbar and the footer`);
+    }
+
+    // The number comes from the build. A literal in the navbar or the footer is
+    // the other half of the same bug: it is the copy that stops moving when the
+    // version does.
+    const unwrapped = `${pill} ${footer}`.replace(/<span data-version>[^<]*<\/span>/g, '<stamp>');
+    const literal = unwrapped.match(/\b\d+\.\d+\.\d+\b/g) || [];
+
+    literal.length
+      ? fail(`site/${page}: version ${literal.join(', ')} is hardcoded in the navbar or footer - only the build may write a version there`)
+      : pass(`site/${page} takes its version from the build`);
+
+    // The tag has to be true of the files it points at. One app version means
+    // every download path - extension zips and the desktop package alike - is
+    // named after that same number.
+    const files = [...new Set([...source.matchAll(/downloads\/[A-Za-z0-9._-]+/g)].map((m) => m[0]))];
+    const stale = files.filter((file) => /\d+\.\d+\.\d+/.test(file) && !file.includes(version));
+
+    stale.length
+      ? fail(`site/${page} offers ${stale.join(', ')} but the app version is ${version}`)
+      : pass(`site/${page}: all ${files.length} download paths carry ${version}`);
+
+    // A second version key would be a second version, which is the thing this
+    // replaced. The desktop tool ships as the app, under the app's number.
+    const secondTrack = (source.match(/data-desktop-version/g) || []).length;
+    secondTrack
+      ? fail(`site/${page}: ${secondTrack} data-desktop-version stamp(s) - the desktop tool has no version of its own`)
+      : pass(`site/${page} has no separate desktop version stamp`);
+  }
+
+  // The names on the page are only worth anything if the files are there.
+  const expected = [
+    `freebuff-adblock-${version}.zip`,
+    `freebuff-adblock-${version}-store.zip`,
+    `freebuff-adblock-${version}-firefox.zip`,
+    `freebuff-adblock-desktop-${version}.zip`,
+    'freebuff-adblock-desktop.sh',
+  ];
+  const downloads = fs.readdirSync(path.join(SITE, 'downloads'));
+  const absent = expected.filter((name) => !downloads.includes(name));
+
+  absent.length
+    ? fail(`site/downloads/ has no ${absent.join(', ')} - run npm run build`)
+    : pass(`every v${version} package the pages offer exists in site/downloads/`);
+
+  // The stamps are only worth anything if the build rewrites them per page, so
+  // that a bumped version can never leave a page behind on the old number - and
+  // if the desktop tool takes that same number instead of inventing one.
+  const buildSource = fs.readFileSync(path.join(ROOT, 'scripts', 'build.mjs'), 'utf8');
+  const desktopSource = fs.readFileSync(path.join(ROOT, 'scripts', 'build-desktop.mjs'), 'utf8');
+
+  buildSource.includes("endsWith('.html')")
+    ? pass('the build stamps every page, not just index.html')
+    : fail('scripts/build.mjs only stamps index.html - a second page would keep its old version');
+
+  buildSource.includes('buildDesktop({ version') &&
+  !buildSource.includes('DESKTOP_VERSION') &&
+  !desktopSource.includes('DESKTOP_VERSION')
+    ? pass('the desktop package is built as the app version, with no version of its own')
+    : fail('a separate desktop version is back - the extension and the desktop tool release under one number');
 }
 
 /* ----------------------------------------------------------------- privacy */
@@ -726,7 +850,7 @@ function checkStoreAssets() {
  * placeholders (an unstamped script would report the literal __FBD_VERSION__
  * and point its own help text at nothing).
  */
-function checkDesktop() {
+function checkDesktop(manifest) {
   console.log('\ndesktop tool');
 
   const file = path.join(ROOT, 'desktop', 'freebuff-adblock.sh');
@@ -744,11 +868,28 @@ function checkDesktop() {
       : fail(`${token} is gone - the tool would ship without its version or origin`);
   }
 
-  for (const id of ['render', 'post', 'request']) {
+  for (const id of ['render', 'request']) {
     source.includes(`FBD-ADS-OFF:${id}`)
       ? pass(`patch "${id}" is defined`)
       : fail(`patch "${id}" is missing from the desktop tool`);
   }
+
+  // `post` is deliberately not an anchor any more. In Freebuff 0.0.164 both
+  // `async post(` helpers are non-ad - the break-event telemetry poster and the
+  // shipper that POSTs to /api/logs - so a `post` anchor could only break
+  // Freebuff's own logging while blocking no ads.
+  source.includes('FBD-ADS-OFF:post')
+    ? fail('a "post" anchor is back - in 0.0.164 it can only match helpers that are not the ad path')
+    : pass('no "post" anchor, so the /api/logs shipper is never in reach');
+
+  // A refusal has to explain itself and offer the command a piped user can run.
+  source.includes('trusted as written') && source.includes('$r->{notes}')
+    ? pass('a refusal carries the per-anchor counts')
+    : fail('the refusal no longer says why an anchor did not fit');
+
+  source.includes('| sh -s scan')
+    ? pass('the refusal offers the piped scan for people with no local copy')
+    : fail('the refusal only offers `sh freebuff-adblock.sh scan`, which a piped run cannot use');
 
   // The refusal path is the whole safety story: without it an unexpected
   // orchestrator would be edited with whatever matched.
@@ -782,6 +923,50 @@ function checkDesktop() {
       ? pass(`the page references ${part}`)
       : fail(`site/index.html no longer references ${part}`);
   }
+
+  // The platform switch. macOS is the only build, so exactly one tab may be
+  // selectable and the other two must stay disabled - an enabled tab with no
+  // panel behind it is a control that does nothing when clicked.
+  const tabs = [...html.matchAll(/data-platform="([a-z]+)"([^>]*)>/g)].map((m) => ({
+    name: m[1],
+    disabled: /\bdisabled\b/.test(m[2]),
+  }));
+  const panels = [...html.matchAll(/data-platform-panel="([a-z]+)"/g)].map((m) => m[1]);
+
+  if (!tabs.length) {
+    fail('site/index.html lost its platform switch - the desktop section has no platform control');
+  } else {
+    const enabled = tabs.filter((tab) => !tab.disabled).map((tab) => tab.name);
+    pass(`platform tabs: ${tabs.length} (selectable: ${enabled.join(', ') || 'none'})`);
+
+    const orphaned = enabled.filter((name) => !panels.includes(name));
+    orphaned.length
+      ? fail(`these platforms are selectable but have no panel to show: ${orphaned.join(', ')}`)
+      : pass('every selectable platform has content behind it');
+
+    const unreachable = panels.filter((name) => !enabled.includes(name));
+    unreachable.length
+      ? fail(`these platforms have content but no selectable tab: ${unreachable.join(', ')}`)
+      : pass('every platform with content has a tab');
+
+    const macos = tabs.find((tab) => tab.name === 'macos');
+    macos && !macos.disabled
+      ? pass('macOS is the platform on offer today')
+      : fail('the macOS tab is disabled or missing, but the macOS tool is the one that ships');
+  }
+
+  // The desktop package has to be named after the same version the extension
+  // ships under: one product, one release, one number.
+  html.includes(`freebuff-adblock-desktop-${manifest.version}`)
+    ? pass(`the desktop package on the page is named after the app version (${manifest.version})`)
+    : fail(
+        `the desktop section offers a package that is not freebuff-adblock-desktop-${manifest.version}.zip`
+      );
+
+  const buildSource = fs.readFileSync(path.join(ROOT, 'scripts', 'build.mjs'), 'utf8');
+  buildSource.includes('desktopVersion')
+    ? fail('scripts/build.mjs writes a second version into version.json')
+    : pass('version.json carries the one app version');
 }
 
 /* ------------------------------------------------------------------ package */
@@ -797,9 +982,10 @@ function run() {
   checkOrigin();
   checkPickerWiring();
   checkStoreButtons();
+  checkVersionLabels(manifest);
   checkPrivacy();
   checkStoreAssets();
-  checkDesktop();
+  checkDesktop(manifest);
 
   console.log('');
   if (problems.length) {

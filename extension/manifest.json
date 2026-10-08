@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Freebuff Ad Block",
   "short_name": "FB Ad Block",
-  "version": "1.3.0",
+  "version": "1.4.1",
   "description": "Blocks ads on freebuff.com in Chrome, Edge and Brave. Site-scoped, no tracking, no accounts.",
   "permissions": ["declarativeNetRequest", "storage"],
   "host_permissions": ["*://freebuff.com/*", "*://*.freebuff.com/*"],

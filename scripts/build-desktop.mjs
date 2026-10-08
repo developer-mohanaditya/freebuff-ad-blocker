@@ -4,6 +4,11 @@
  *   desktop/  ->  site/downloads/freebuff-adblock-desktop.sh
  *              -> site/downloads/freebuff-adblock-desktop-<version>.zip
  *
+ * `<version>` is the app version, read from extension/manifest.json by
+ * build.mjs and handed in here - the extension and the desktop tool are one
+ * product released under one number, so nothing in this step may invent a
+ * version of its own.
+ *
  * The shell tool is the artifact: it is what the install page tells people to
  * pipe through `sh`, so it is served as a plain file as well as inside the zip.
  * The zip carries the same tool plus a double-clickable `.command` and a short
@@ -19,13 +24,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createZip } from './zip.mjs';
-
-/**
- * The tool has its own version, deliberately not the extension's: a change to
- * how the desktop bundle is patched must be shippable without pushing a new
- * package to three browser stores. Bump this when desktop/ changes.
- */
-export const DESKTOP_VERSION = '1.4.0';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DESKTOP_DIR = path.join(ROOT, 'desktop');
@@ -63,6 +61,8 @@ function formatBytes(bytes) {
 }
 
 export function buildDesktop({ version, origin }) {
+  if (!version) throw new Error('buildDesktop needs the app version');
+
   fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
 
   if (!fs.existsSync(path.join(DESKTOP_DIR, TOOL_SOURCE))) {

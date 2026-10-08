@@ -9,9 +9,10 @@
 #
 # This script disables the ad runtime in place. It is deliberately boring:
 #
-#   - It only touches the ad code. The two render entry points are forced to
-#     return "nothing to show", and the two request helpers that talk to the ad
-#     API are made to give up before they send. Nothing else in the file changes.
+#   - It only touches the ad code, at two anchors: the gate the ad auction
+#     consults is forced to return "no ads to show", and the ad client's own
+#     request helper - the one method every /api/v1/ads/* call goes through - is
+#     made to give up before it sends. Nothing else in the file changes.
 #   - It refuses to run at all unless every patch anchor is found the exact
 #     number of times it expects, and a relaxation is only accepted when ad code
 #     sits right beside it. A new Freebuff version that renames a function fails
@@ -34,7 +35,7 @@
 #   sh freebuff-adblock.sh scan       # show the anchors this build has (for a re-anchor)
 #
 #   --app PATH          the Freebuff.app to patch (default: /Applications)
-#   --display-only      skip the request choke-points (render paths only)
+#   --display-only      skip the ad-API anchor (leave the render gate only)
 #   --dry-run           with install: report what would happen, write nothing
 #   --backup-dir PATH   where the pristine copy lives
 #   --resign            ad-hoc re-sign the bundle after patching
@@ -165,8 +166,11 @@ my @patches = (
   {
     id     => 'render',
     layer  => 'display',
-    what   => 'stop the ad render paths (displayAd + auction)',
-    expect => 2,
+    # 0.0.164 has ONE render gate. 0.0.155 had two (`displayAd` + `auction`), and
+    # the displayAd one is gone from the bundle - `scan` shows a single match for
+    # both the literal and the relaxation, in auction().
+    what   => 'force the ad auction to return no ads',
+    expect => 1,
     tries  => [
       {
         name => 'literal',
@@ -181,34 +185,28 @@ my @patches = (
       },
     ],
   },
-  {
-    id     => 'post',
-    layer  => 'request',
-    what   => 'stop the ad request helper from sending',
-    expect => 1,
-    tries  => [
-      {
-        name => 'literal',
-        find => qr/async post\([^)]*\) \{/,
-        repl => 'async post(path, body, options = {}) { return { ok: false, status: 0, json: async () => ({}) }; /*FBD-ADS-OFF:post*/',
-      },
-      {
-        name => 'relaxed',
-        find => qr/(?<![.\w\$])(?:(?:async|static)\s+)*post\s*\([^)]*\)\s*\{/,
-        near => $AD_NEAR,
-        repl => 'async post(path, body, options = {}) { return { ok: false, status: 0, json: async () => ({}) }; /*FBD-ADS-OFF:post*/',
-      },
-    ],
-  },
+  # There is deliberately no `post` anchor any more, and it must not come back
+  # without a reason. The 0.0.155 tool had one, for an ad helper that no longer
+  # exists: in 0.0.164 `async post(...)` matches the ad break-event *telemetry*
+  # poster and the logs shipper that posts to ${API_HOST}/api/logs. Patching the
+  # latter would break Freebuff's own logging and block no ads, and a literal
+  # that keeps matching two unrelated helpers is exactly what this tool must not
+  # aim at. The `request` anchor below already stops the ad API being reached.
   {
     id     => 'request',
     layer  => 'request',
-    what   => 'stop the ad request helper from sending',
+    what   => 'stop the ad client from reaching the ad API',
     expect => 1,
     tries  => [
       {
         name => 'literal',
-        find => qr/async request\([^)]*\) \{/,
+        # Re-anchored against 0.0.164, where this is unique. The second argument
+        # is matched name-agnostically because it is a minifier-supplied local
+        # (`path27` in the build this was verified against) and will be renamed
+        # by any future build; the shape around it will not. The other six
+        # `async request(` definitions in 0.0.164 belong to a proxy, the sites
+        # client and the config clients, and none of them has this signature.
+        find => qr/async request\(method, [A-Za-z_\$][\w\$]*, payload, timeoutMs = REQUEST_TIMEOUT_MS\) \{/,
         repl => 'async request(method, path, payload, timeoutMs = REQUEST_TIMEOUT_MS) { return { ok: !1, status: 0, message: "" }; /*FBD-ADS-OFF:request*/',
       },
       {
@@ -268,7 +266,13 @@ sub evaluate {
     my $n    = scalar @h;
     my $near = scalar grep { near_ok($src, $_, $t->{near}) } @h;
     $hits = $n if $n > $hits;
-    push @notes, sprintf('%s: %d match(es), %d beside ad code', $t->{name}, $n, $near);
+    # A strategy with no `near` is trusted as written, so an adjacency count for
+    # it would be vacuous - "6 beside ad code" implies a corroboration that
+    # never ran. Say which it is.
+    push @notes,
+      defined $t->{near}
+      ? sprintf('%s: %d match(es), %d beside ad code', $t->{name}, $n, $near)
+      : sprintf('%s: %d match(es), trusted as written', $t->{name}, $n);
     next unless $n == $p->{expect} && $near == $n;
     # The first usable strategy wins, and the rest are not even run: on a 9 MB
     # file the literal is the common case, and scanning it once beats scanning
@@ -319,7 +323,12 @@ sub run_scan {
       my $near = scalar grep { near_ok($src, $_, $t->{near}) } @h;
       my $uses = ($c == $p->{expect} && $near == $c) ? '   <- usable' : '';
 
-      push @o, sprintf('   %-8s %d match(es), %d beside ad code%s', $t->{name}, $c, $near, $uses);
+      push @o,
+        sprintf(
+          defined $t->{near}
+          ? '   %-8s %d match(es), %d beside ad code%s'
+          : '   %-8s %d match(es), trusted as written%s',
+          $t->{name}, $c, (defined $t->{near} ? $near : ()), $uses);
 
       my $shown = 0;
       for my $h (@h) {
@@ -332,9 +341,12 @@ sub run_scan {
     push @o, '';
   }
 
-  push @o, '== probes ==';
+  # Case-insensitive: the probes are substrings a person greps for by hand, and
+  # a case-sensitive `agenticTestCampaign` misses `localAgenticTestCampaign`,
+  # which reads as "the ad runtime is gone" when it is right there.
+  push @o, '== probes == (case-insensitive)';
   for my $probe (@PROBES) {
-    my @h = find_hits($src, qr/\Q$probe\E/);
+    my @h = find_hits($src, qr/\Q$probe\E/i);
     push @o, sprintf('   %-20s %d', $probe, scalar @h);
     my $shown = 0;
     for my $h (@h) {
@@ -370,6 +382,7 @@ for my $p (@patches) {
   my $state;
   my $via     = '-';
   my $anchors = 0;
+  my @notes   = ();
 
   if ($skip) {
     $state = 'skipped';
@@ -378,7 +391,8 @@ for my $p (@patches) {
   } elsif ($markers > 0) {
     $state = 'broken';
   } else {
-    my ($usable, $notes, $hits) = evaluate($src, $p);
+    my ($usable, $notes_ref, $hits) = evaluate($src, $p);
+    @notes = @$notes_ref;
 
     if ($usable) {
       $via     = $usable->{name};
@@ -408,6 +422,9 @@ for my $p (@patches) {
   push @rows, {
     id => $id, what => $p->{what}, state => $state, via => $via,
     anchors => $anchors, markers => $markers, expect => $p->{expect},
+    # Why it is not ok, carried out to the shell so a refusal can explain
+    # itself: "render ambiguous" alone is not a report anyone can act on.
+    notes => join('; ', @notes),
   };
 }
 
@@ -427,9 +444,9 @@ if ($mode eq 'apply' && $changed && !$failed) {
 }
 
 for my $r (@rows) {
-  printf "PATCH|%s|%s|%d|%d|%d|%s|%s\n",
+  printf "PATCH|%s|%s|%d|%d|%d|%s|%s|%s\n",
     $r->{id}, $r->{state}, $r->{anchors}, $r->{markers}, $r->{expect},
-    $r->{via}, $r->{what};
+    $r->{via}, $r->{what}, $r->{notes};
 }
 printf "WRITTEN|%d\n", ($mode eq 'apply' && $changed && !$failed) ? 1 : 0;
 print $failed ? "RESULT|fail\n" : "RESULT|ok\n";
@@ -446,7 +463,7 @@ verdict_of() {
 }
 
 render_report() {
-  printf '%s\n' "$1" | while IFS='|' read -r kind id state anchors markers expect via what; do
+  printf '%s\n' "$1" | while IFS='|' read -r kind id state anchors markers expect via what notes; do
     [ "$kind" = "PATCH" ] || continue
     case "$state" in
       applied)   mark="${GREEN}applied${OFF}" ;;
@@ -462,6 +479,14 @@ render_report() {
       mark="$mark ${DIM}(via relaxed match)${OFF}"
     fi
     printf '  %-9s %s\n' "$id" "$mark"
+
+    # The counts, when the anchor is not simply applied. This is the line that
+    # turns "ambiguous" into something a reader can act on without running scan.
+    case "$state" in
+      ambiguous|unknown|broken|failed)
+        [ -n "${notes:-}" ] && printf '            %s%s%s\n' "$DIM" "$notes" "$OFF"
+        ;;
+    esac
   done
 }
 
@@ -514,7 +539,7 @@ cmd_help() {
   say ""
   say "${B}options${OFF}"
   say "  --app PATH         the Freebuff.app to patch (default: /Applications)"
-  say "  --display-only     skip the request choke-points"
+  say "  --display-only     skip the ad-API anchor (leave the render gate only)"
   say "  --dry-run          report only, write nothing"
   say "  --backup-dir PATH  where the pristine copy lives"
   say "  --resign           ad-hoc re-sign the bundle after patching"
@@ -593,11 +618,16 @@ cmd_install() {
     say "  Nothing was written. Either it was modified by another tool, or this"
     say "  Freebuff version changed the ad code."
     say ""
-    say "  See what this build actually has:  sh freebuff-adblock.sh scan"
+    say "  See what this build actually has:"
+    say "    sh freebuff-adblock.sh scan                        (a local copy)"
+    say "    curl -fsSL $ORIGIN/downloads/freebuff-adblock-desktop.sh | sh -s scan"
+    say "  Read-only either way. The piped one is for when you ran this through"
+    say "  curl and have no local copy of the script to point at."
     say ""
     if [ -f "$BACKUP_DIR/orchestrator.js.$version.orig" ]; then
       say "  A pristine backup is on disk:"
       say "    sh freebuff-adblock.sh revert && sh freebuff-adblock.sh install"
+      say "    curl -fsSL $ORIGIN/downloads/freebuff-adblock-desktop.sh | sh -s revert"
     fi
     return 1
   fi

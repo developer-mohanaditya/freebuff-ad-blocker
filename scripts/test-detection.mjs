@@ -25,6 +25,11 @@ try {
 
 const CODE = fs.readFileSync(new URL('../extension/content.js', import.meta.url), 'utf8');
 
+/** The real manifest, so no test double carries a version of its own. */
+const MANIFEST = JSON.parse(
+  fs.readFileSync(new URL('../extension/manifest.json', import.meta.url), 'utf8')
+);
+
 const html = `<!doctype html><html><head></head><body>
   <div id="app">
     <aside class="sidebar">
@@ -82,7 +87,7 @@ const sendMessage = (type) => messageListeners.forEach((fn) => fn({ type }, {}, 
 window.chrome = {
   runtime: {
     lastError: null,
-    getManifest: () => ({ version: '1.3.0' }),
+    getManifest: () => ({ version: MANIFEST.version }),
     sendMessage: () => undefined,
     onMessage: { addListener: (fn) => messageListeners.push(fn) },
   },

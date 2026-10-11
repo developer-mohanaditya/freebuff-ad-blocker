@@ -1,0 +1,151 @@
+Freebuff AdBlock for Desktop - Windows  (v__FBD_VERSION__)
+==========================================================
+
+Blocks the ads Freebuff Desktop renders from the orchestrator it ships inside its
+own install folder.
+
+NOTHING TO INSTALL FIRST
+------------------------
+
+PowerShell ships with every Windows 10 and Windows 11, and so do `irm` and `iex`.
+There is no dependency here, no package manager and no runtime to fetch.
+
+WHAT IS IN THIS FOLDER
+----------------------
+
+  Freebuff AdBlock.cmd             Double-click this. It opens PowerShell and
+                                   patches the app.
+
+  freebuff-adblock-desktop.ps1     The tool itself, if you would rather run it by
+                                   hand:
+
+                                     powershell -ExecutionPolicy Bypass -File .\freebuff-adblock-desktop.ps1 install
+
+USING IT
+--------
+
+1. Freebuff Desktop must be installed. The tool looks in the places a Windows
+   install usually lands - the per-user folder under %LOCALAPPDATA%\Programs,
+   Program Files, Squirrel's app-<version> folders, and the uninstall registry
+   entries that record wherever it actually went. If yours is somewhere else,
+   point at it directly:
+
+     -App "D:\Apps\Freebuff"
+
+2. Double-click "Freebuff AdBlock.cmd", or run one of:
+
+     powershell -ExecutionPolicy Bypass -File .\freebuff-adblock-desktop.ps1 install
+
+     irm __FBD_ORIGIN__/downloads/freebuff-adblock-desktop.ps1 | iex
+
+   The second one is the one-liner and it is the easier of the two, for a reason
+   worth knowing: nothing is written to disk, so Windows never tags it as a
+   download, and the execution policy - which governs .ps1 *files* - never
+   applies. Double-clicking the .cmd passes -ExecutionPolicy Bypass for the same
+   reason. If Windows still refuses a file you saved yourself, run:
+
+     Unblock-File .\freebuff-adblock-desktop.ps1
+
+3. Quit Freebuff completely and reopen it. The orchestrator is read once at
+   launch, so the patch only takes effect on the next start - focusing the window
+   is not enough. The tool waits for that relaunch and then reports what it finds -
+   whether the process running now started after the patch was written - so the
+   patch does not have to be taken on trust. The wait ends by itself after five
+   minutes (use -Timeout SECONDS to change that), and Ctrl-C stops it at any time.
+   An interrupted wait prints no verdict, so run verify again if you want one.
+
+If the tool says Freebuff has the file open, quit it from the tray icon (or end
+Freebuff.exe in Task Manager) and run it again. If Windows refuses the write on an
+install under C:\Program Files, open PowerShell with "Run as administrator" and
+run the same command - a per-user install never needs that. The tool never asks
+for a password and never elevates by itself.
+
+OTHER COMMANDS
+--------------
+
+  powershell -ExecutionPolicy Bypass -File .\freebuff-adblock-desktop.ps1 status    report what is applied - changes nothing
+  powershell -ExecutionPolicy Bypass -File .\freebuff-adblock-desktop.ps1 verify    wait for the relaunch, then check what it loaded
+  powershell -ExecutionPolicy Bypass -File .\freebuff-adblock-desktop.ps1 scan      show every anchor this build has - changes nothing
+  powershell -ExecutionPolicy Bypass -File .\freebuff-adblock-desktop.ps1 revert    restore the untouched original
+  powershell -ExecutionPolicy Bypass -File .\freebuff-adblock-desktop.ps1 doctor    environment report, for a bug report
+
+The same commands work through the one-liner, because `iex` takes a string and
+nothing else:
+
+  $s = irm __FBD_ORIGIN__/downloads/freebuff-adblock-desktop.ps1; & ([scriptblock]::Create($s)) scan
+
+AFTER A FREEBUFF UPDATE
+-----------------------
+
+Every update replaces the app's resources folder, so the patch goes away. Run
+install again after an update.
+
+An update can also change the code the tool looks for. Each anchor has a literal
+form and a relaxed one; the relaxed form is only used when it appears the expected
+number of times AND ad code sits beside it, and the write is undone if the check
+afterwards disagrees. When an anchor does not fit, install refuses and prints the
+counts it saw - "render ambiguous, literal: 2 match(es)" - so you can see whether
+the shape changed or only the number of times it appears. To get the full report:
+
+  powershell -ExecutionPolicy Bypass -File .\freebuff-adblock-desktop.ps1 scan
+
+or, with no local copy to point at:
+
+  $s = irm __FBD_ORIGIN__/downloads/freebuff-adblock-desktop.ps1; & ([scriptblock]::Create($s)) scan
+
+Both list every candidate site the build has, write a copy to your backup folder,
+and touch nothing inside the app.
+
+IS IT ACTUALLY OFF?
+-------------------
+
+A patch on disk is not a patch in effect. The orchestrator is read once, when
+Freebuff starts, so patching a running app changes nothing until it is relaunched.
+That is what `verify` is for:
+
+  powershell -ExecutionPolicy Bypass -File .\freebuff-adblock-desktop.ps1 verify
+
+It waits for Freebuff to be quit and reopened, then compares two times - when the
+patch was written, and when the process running now started. Started later means
+the app you are looking at is the one that read the patched file. It also lists
+the ad code still in the build, so you can see the patch is aimed at something
+real rather than at code that has moved. `install` runs the same check for you
+whenever Freebuff is open, which is why it sits and waits after patching.
+
+  ... verify -NoWait            report now, do not wait
+  ... verify -Timeout 60        wait at most a minute
+
+The one thing none of this can see is whether an ad break still appears - that is
+the app's behaviour, and only you can watch it. On the free tier, run a turn and
+watch the thread: an ad card is the one carrying an "AD" chip or a /track/click
+link. If one appears with both markers applied and the process started after the
+patch, that is worth reporting - it means Freebuff has a second ad path, and the
+scan report above is what a re-anchor needs.
+
+WHAT IT DOES
+------------
+
+It only touches the ad code in resources\orchestrator\orchestrator.js. It forces
+the gate the ad auction consults to return "no ads to show", and makes the ad
+client's own request helper fail before it sends, so none of the /api/v1/ads/*
+calls can be reached. Nothing else changes - in particular the log shipper that
+posts to /api/logs is left alone.
+
+It refuses to run unless every anchor it expects is found the exact number of
+times it expects, so a Freebuff version that renames something fails safe and
+changes nothing rather than half-patching a 9 MB file. A relaxed match is accepted
+only when ad code sits beside it, so a similarly shaped gate elsewhere in the
+bundle is never mistaken for the ad render path. The untouched original is backed
+up before the first write, and `revert` puts it back. The new file is built beside
+the original and moved into place, so the write is either the whole patch or none
+of it, and the tool will not rewrite a file it cannot read as UTF-8.
+
+Unlike the macOS tool, there is no code-signing step and none is needed: Windows
+signs the .exe, and its hash does not cover the JavaScript resources beside it.
+
+Upstream source and licence (MIT):
+  __FBD_ORIGIN__
+
+Patching a third-party application's bundled code may conflict with that
+application's terms of service. Use it on your own machine, at your own
+discretion.

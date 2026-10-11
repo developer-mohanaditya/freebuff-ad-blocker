@@ -29,7 +29,7 @@
            inspected and released together, so this tag carries the same number
            as every file name in downloads/ - the extension zips and the desktop
            package all read <version>, and this is the only version there is. -->
-      <span class="pill">v<span data-version>1.4.2</span></span>
+      <span class="pill">v<span data-version>1.6.0</span></span>
     </header>
 
     <main>
@@ -183,13 +183,13 @@
                 new path again.
               </p>
               <p>
-                <a class="btn btn-primary" data-zip href="downloads/freebuff-adblock-1.4.2.zip" download>
+                <a class="btn btn-primary" data-zip href="downloads/freebuff-adblock-1.6.0.zip" download>
                   Download extension
-                  <span class="btn-meta">v<span data-version>1.4.2</span> · zip</span>
+                  <span class="btn-meta">v<span data-version>1.6.0</span> · zip</span>
                 </a>
               </p>
               <div class="copy-row">
-                <code data-download-path>/downloads/freebuff-adblock-1.4.2.zip</code>
+                <code data-download-path>/downloads/freebuff-adblock-1.6.0.zip</code>
                 <button type="button" class="copy" data-copy>Copy</button>
               </div>
             </div>
@@ -243,7 +243,7 @@
               shared — the same ruleset, the same content script, the same popup.
             </p>
             <p>
-              <a href="downloads/freebuff-adblock-1.4.2-firefox.zip" download>Download the Firefox
+              <a href="downloads/freebuff-adblock-1.6.0-firefox.zip" download>Download the Firefox
               package</a>, then open <code>about:debugging#/runtime/this-firefox</code>, choose
               <strong>Load Temporary Add-on</strong>, and select <code>manifest.json</code> from
               the folder you extracted. A temporary add-on lasts until Firefox restarts — a build
@@ -333,10 +333,10 @@
         </div>
 
         <!-- The switch is a segmented control: one platform's content is on
-             screen at a time. macOS is the only build so far, so the other two
-             carry `disabled` - shown, greyed and unclickable rather than hidden,
-             because a missing tab reads as a missing feature. Drop the attribute
-             and add its `data-platform-panel` block when a build ships. -->
+             screen at a time. All three platforms have a build now, so all three
+             tabs work and each has a `data-platform-panel` block. A platform
+             without a build would carry `disabled` - shown and greyed rather
+             than hidden, because a missing tab reads as a missing feature. -->
         <div class="platform-switch reveal" role="tablist" aria-label="Desktop platform">
           <button
             type="button"
@@ -353,7 +353,6 @@
             role="tab"
             aria-selected="false"
             data-platform="windows"
-            disabled
           >
             For Windows
           </button>
@@ -363,14 +362,13 @@
             role="tab"
             aria-selected="false"
             data-platform="linux"
-            disabled
           >
             For Linux
           </button>
         </div>
         <p class="fine platform-note">
-          macOS is the only build so far. Windows and Linux are listed ahead of the tools,
-          so the switch is ready the moment they ship.
+          All three have a tool. Pick your platform — the switch opens on the one you are reading
+          this on, and each tab's download is that platform's build.
         </p>
 
         <div class="split" data-platform-panel="macos">
@@ -386,7 +384,7 @@
               <button type="button" class="copy" data-copy>Copy</button>
             </div>
             <p class="fine">
-              Prefer a file? <a data-desktop-zip href="downloads/freebuff-adblock-desktop-1.4.2.zip" download>Download
+              Prefer a file? <a data-desktop-zip href="downloads/freebuff-adblock-desktop-1.6.0.zip" download>Download
               the tool</a> — a zip with a double-clickable launcher and a short read-me — then run
               <code>sh freebuff-adblock.sh install</code>.
             </p>
@@ -398,7 +396,7 @@
               <code>sh freebuff-adblock.sh revert</code>.
             </p>
             <p class="fine">
-              Tool v<span data-version>1.4.2</span>, anchored against Freebuff Desktop
+              Tool v<span data-version>1.6.0</span>, anchored against Freebuff Desktop
               <strong>0.0.164</strong>: it forces the ad auction to return nothing and cuts the ad
               client off from its API, and it undoes its own write if the result does not check
               out. If a Freebuff release moves something it cannot recognise, it refuses and
@@ -430,6 +428,168 @@
                 <strong>After a Freebuff update, run it again.</strong> An update replaces the
                 app's Resources folder, so the patch goes with it. The backup is kept for each
                 version, so reverting an older one still works.
+              </li>
+            </ol>
+          </div>
+        </div>
+
+        <div class="split" data-platform-panel="windows" hidden>
+          <div class="panel reveal">
+            <h3>Run it</h3>
+            <p>
+              One line in PowerShell, and nothing to install first — Windows ships PowerShell,
+              <code>irm</code> and <code>iex</code> with the OS. Piping straight into
+              <code>iex</code> is also the easier way in: no file is written to disk, so Windows
+              never tags it as a download, and the execution policy — which governs
+              <code>.ps1</code> <em>files</em> — never comes into it. The tool writes a copy of the
+              original file before it touches anything, and <code>revert</code> puts it back.
+            </p>
+            <div class="copy-row">
+              <code data-desktop-win-command>irm https://freebuff-adblocker.vercel.app/downloads/freebuff-adblock-desktop.ps1 | iex</code>
+              <button type="button" class="copy" data-copy>Copy</button>
+            </div>
+            <!-- The same shape as the macOS panel's download: an inline link in the
+                 fine print, not a `.btn`. A `.btn` cannot live inside a `.panel`
+                 without the label disappearing - `.panel a` sets the accent colour
+                 at a higher specificity than `.btn-primary`, which paints orange
+                 text on the orange fill. See the guard in site/styles.css. -->
+            <p class="fine">
+              Prefer a file? <a data-desktop-win-zip href="downloads/freebuff-adblock-desktop-1.6.0-windows.zip" download>Download
+              the tool</a> — a zip with a double-clickable launcher and a short read-me. A saved
+              file carries the mark-of-the-web, so either unblock it first with
+              <code>Unblock-File .\freebuff-adblock-desktop.ps1</code>, or run it the way the
+              launcher does:
+              <code>powershell -ExecutionPolicy Bypass -File .\freebuff-adblock-desktop.ps1 install</code>.
+            </p>
+            <p class="fine">
+              The other commands need the scriptblock form, because <code>iex</code> takes a
+              string and nothing else:
+              <code>$s = irm …/downloads/freebuff-adblock-desktop.ps1; &amp; ([scriptblock]::Create($s)) status</code>.
+              <code>status</code> reports what is applied and changes nothing,
+              <code>verify</code> waits for the relaunch and then says what the app you have open
+              actually loaded, <code>scan</code> prints every anchor this build has, and
+              <code>revert</code> restores the untouched original.
+            </p>
+            <p class="fine">
+              Tool v<span data-version>1.6.0</span>, anchored against Freebuff Desktop
+              <strong>0.0.164</strong> — the same two anchors as the macOS tool: it forces the ad
+              auction to return nothing and cuts the ad client off from its API, and it undoes its
+              own write if the result does not check out. It finds the install itself (the per-user
+              folder under <code>%LOCALAPPDATA%\Programs</code>, Program Files, Squirrel's
+              <code>app-&lt;version&gt;</code> folders, and the uninstall registry entries), and
+              <code>-App</code> points it somewhere else if your copy lives off the beaten path. If
+              a Freebuff release moves something it cannot recognise, it refuses and prints the
+              counts it saw instead of guessing — and
+              <code>… ([scriptblock]::Create($s)) scan</code> prints what the installed build
+              actually contains, changing nothing.
+            </p>
+          </div>
+
+          <div class="panel reveal">
+            <h3>After you run it</h3>
+            <ol class="mini-steps">
+              <li>
+                <strong>Quit Freebuff completely</strong> and reopen it — from the tray icon, or
+                by ending <code>Freebuff.exe</code> in Task Manager. The orchestrator is read once
+                at launch, so bringing the window forward is not enough. The tool waits for that
+                relaunch and then reports what it finds: whether the running process started after
+                the patch was written, and whether the ad code it targets is still in the build.
+                Ctrl-C stops the wait; an interrupted wait prints no verdict.
+              </li>
+              <li>
+                <strong>If it says Freebuff has the file open</strong>, that is Windows refusing to
+                replace a file another process is holding — quit Freebuff properly (closing the
+                window is not always quitting) and run it again. The tool will not force the write.
+              </li>
+              <li>
+                <strong>If the write is refused on a machine-wide install</strong> (under
+                <code>C:\Program Files</code>), open PowerShell with <em>Run as administrator</em>
+                and run the same command. A per-user install under
+                <code>%LOCALAPPDATA%\Programs</code> never needs that, and the tool never asks for
+                a password or elevates by itself.
+              </li>
+              <li>
+                <strong>After a Freebuff update, run it again.</strong> An update replaces the
+                app's resources folder, so the patch goes with it. The backup is kept per version,
+                so reverting an older one still works.
+              </li>
+            </ol>
+          </div>
+        </div>
+
+        <div class="split" data-platform-panel="linux" hidden>
+          <div class="panel reveal">
+            <h3>Run it</h3>
+            <p>
+              One line, and nothing to install first — it is a shell script using the
+              <code>perl</code> and <code>pgrep</code> your distribution already has. Freebuff for
+              Linux ships as an <strong>AppImage</strong>: one executable holding a read-only
+              filesystem, so there is no file inside it to patch. The tool never writes to your
+              download. It extracts the image with the runtime the image itself carries — no FUSE,
+              no <code>squashfs-tools</code>, no root — patches that copy, and tells you to start
+              it instead.
+            </p>
+            <div class="copy-row">
+              <code data-desktop-linux-command>curl -fsSL https://freebuff-adblocker.vercel.app/downloads/freebuff-adblock-desktop-linux.sh | sh</code>
+              <button type="button" class="copy" data-copy>Copy</button>
+            </div>
+            <!-- Inline link, like the other two panels: see the note in the
+                 Windows panel and the `:not(.btn)` guard in styles.css. -->
+            <p class="fine">
+              Prefer a file? <a data-desktop-linux-zip href="downloads/freebuff-adblock-desktop-1.6.0-linux.zip" download>Download
+              the tool</a> — a zip with the script and a short read-me — then run
+              <code>sh freebuff-adblock-linux.sh</code>.
+            </p>
+            <p class="fine">
+              Report what is applied, and change nothing:
+              <code>sh freebuff-adblock-linux.sh status</code>. Check what the copy you started
+              actually loaded — it waits for the relaunch and then says so:
+              <code>sh freebuff-adblock-linux.sh verify</code>. Undo it:
+              <code>sh freebuff-adblock-linux.sh revert</code>. Pointed at a directory
+              instead — an AppDir you extracted yourself — it patches in place, exactly like the
+              macOS tool.
+            </p>
+            <p class="fine">
+              Tool v<span data-version>1.6.0</span>, anchored against Freebuff Desktop
+              <strong>0.0.164</strong> — the same two anchors, verified against the real Linux
+              build: it forces the ad auction to return nothing and cuts the ad client off from its
+              API, and it undoes its own write if the result does not check out. It looks for
+              <code>*Freebuff*.AppImage</code> in <code>~/Applications</code>,
+              <code>~/Downloads</code>, <code>~/.local/bin</code>, <code>/opt</code> and elsewhere,
+              and <code>--app</code> points it at the image or directory you mean. If a Freebuff
+              release moves something it cannot recognise, it refuses and prints the counts it saw
+              instead of guessing — and <code>scan</code> prints what that build actually
+              contains, changing nothing.
+            </p>
+          </div>
+
+          <div class="panel reveal">
+            <h3>After you run it</h3>
+            <ol class="mini-steps">
+              <li>
+                <strong>Start the patched copy, not the image.</strong> The path is printed for
+                you, and it is under <code>~/.local/share/freebuff-adblock</code>. The orchestrator
+                is read once at launch, so the patch only takes effect on the next start. Your
+                original <code>.AppImage</code> is untouched — keep it as the unpatched fallback,
+                because running it still shows ads.
+              </li>
+              <li>
+                <strong>Then check what it loaded:</strong>
+                <code>sh freebuff-adblock-linux.sh verify</code>. It waits for something to be
+                running the patched file, then compares when the patch was written against when
+                that process started. Ctrl-C stops the wait; an interrupted wait prints no verdict.
+              </li>
+              <li>
+                <strong>If the directory is not writable</strong>, you are pointing at a
+                system-wide install under <code>/opt</code> or <code>/usr</code>, which belongs to
+                root. Use the AppImage path instead — that never needs it — or re-run the same
+                command with <code>sudo</code> if you really mean to patch the system copy. The
+                tool never escalates by itself and never asks for a password.
+              </li>
+              <li>
+                <strong>After a Freebuff update, run it again.</strong> An update is a new
+                AppImage, so the patched copy is left behind by it. Each version is extracted into
+                its own directory, so nothing is overwritten and the backup is kept per version.
               </li>
             </ol>
           </div>
@@ -471,12 +631,13 @@
         <div class="scope-note reveal">
           <span class="scope-label">Scope</span>
           <p>
-            Two apps, two tools, one idea. The <strong>web version</strong> is covered by the
-            extension above, which a browser can only reach because Chromium renders the page. The
-            <strong>desktop app</strong> is a separate bundle with no extension surface, so it is
-            covered by the local tool in <a href="#desktop">For Desktop</a> instead. Neither has a
-            server, an account or a telemetry endpoint, and neither touches anything outside
-            freebuff.com and your own machine.
+            Two apps, one idea, and a tool for each — because neither can reach the other. The
+            <strong>web version</strong> is covered by the extension above, which a browser can
+            only reach because Chromium renders the page. The <strong>desktop app</strong> is a
+            separate bundle with no extension surface, so it is covered by the local tool in
+            <a href="#desktop">For Desktop</a> instead: one build per platform, macOS, Windows and
+            Linux. Neither has a server, an account or a telemetry endpoint, and neither touches
+            anything outside freebuff.com and your own machine.
           </p>
         </div>
       </section>
@@ -484,7 +645,7 @@
 
     <footer class="footer">
       <p>
-        Freebuff Ad Block · v<span data-version>1.4.2</span> · site-scoped, no accounts, no
+        Freebuff Ad Block · v<span data-version>1.6.0</span> · site-scoped, no accounts, no
         telemetry.
       </p>
       <p class="fine">

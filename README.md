@@ -10,9 +10,9 @@ Site-scoped by design — it touches freebuff.com and nothing else. No accounts,
 no backend, no database, no telemetry, and nothing to configure.
 
 The **desktop app** is a separate bundle with no extension surface, so it has
-its own tool: a dependency-free shell script in [`desktop/`](desktop) that turns
-the app's bundled ad runtime off in place. Same rules — local, reversible, and
-nothing to configure.
+its own tools: a dependency-free shell script for macOS and a PowerShell script
+for Windows in [`desktop/`](desktop), each turning the app's bundled ad runtime
+off in place. Same rules — local, reversible, and nothing to configure.
 
 [Install it](https://freebuff-adblocker.vercel.app/) ·
 [Privacy policy](https://freebuff-adblocker.vercel.app/privacy) ·
@@ -128,14 +128,14 @@ Freebuff Desktop renders its ads from a runtime it ships inside its own bundle �
 That file is not in `app.asar`, and no browser extension can reach it, so the
 desktop app needs a different tool rather than a different rule.
 
-**macOS is the only build.** The install page's desktop section carries a
-three-way platform switch — For macOS, For Windows, For Linux — and the latter
-two are `disabled` in the markup: shown, greyed and unclickable rather than
-hidden, because a missing tab reads as a missing feature. Shipping a second
-platform means adding its `data-platform-panel` block and dropping that
-attribute; the switch itself needs no change.
+The install page's desktop section carries a three-way platform switch — For
+macOS, For Windows, For Linux — and all three have a tool, one tab each. A
+platform without a build carries `disabled` in the markup: shown, greyed and
+unclickable rather than hidden, because a missing tab reads as a missing feature.
+The switch also opens on the platform it is being read on when that platform has
+a build, so a Windows reader is not handed the macOS instructions.
 
-`desktop/freebuff-adblock.sh` is that tool. One file, no dependencies — macOS
+**macOS — `desktop/freebuff-adblock.sh`.** One file, no dependencies — macOS
 already ships the `sh` and `perl` it uses:
 
 ```sh
@@ -148,6 +148,77 @@ sh freebuff-adblock.sh install   # patch, backing up first
 sh freebuff-adblock.sh revert    # restore the untouched original
 sh freebuff-adblock.sh doctor    # environment report, for a bug report
 ```
+
+**Windows — `desktop/freebuff-adblock.ps1`.** One file, and no dependencies
+either: Windows ships PowerShell, `irm` and `iex` with the OS, so there is nothing
+to install first and no package manager involved.
+
+```powershell
+irm https://freebuff-adblocker.vercel.app/downloads/freebuff-adblock-desktop.ps1 | iex
+
+$s = irm https://freebuff-adblocker.vercel.app/downloads/freebuff-adblock-desktop.ps1
+& ([scriptblock]::Create($s)) status     # what is applied, change nothing
+& ([scriptblock]::Create($s)) verify     # wait for the relaunch, check what it loaded
+& ([scriptblock]::Create($s)) scan       # every anchor this build has, change nothing
+& ([scriptblock]::Create($s)) install    # patch, backing up first
+& ([scriptblock]::Create($s)) revert     # restore the untouched original
+& ([scriptblock]::Create($s)) doctor     # environment report, for a bug report
+```
+
+Two Windows details worth knowing. `iex` runs a *string*: nothing is written to
+disk, so nothing carries the mark-of-the-web, and the execution policy — which
+governs `.ps1` files — never comes into it. That is why the one-liner is the
+headline, and why the `.cmd` in the downloaded zip passes
+`-ExecutionPolicy Bypass`. The other is that the tool finds the app itself: the
+per-user folder under `%LOCALAPPDATA%\Programs` (where the Windows build lands,
+as `@codebufffreebuff-desktop`), Program Files, Squirrel's `app-<version>`
+folders, the uninstall registry entries, and the running app's own path. `-App
+PATH` overrides all of it, and it may point at the install folder, its
+`resources` folder, or `orchestrator.js` itself.
+
+A blocked write is reported by cause rather than by guesswork, because the three
+causes need three different actions: a file Freebuff is holding is a share
+violation and gets "quit Freebuff and run it again", an install under
+`C:\Program Files` needs an elevated PowerShell window, and a read-only file gets
+the `attrib -R` line. It never elevates by itself, and there is no re-sign step on
+Windows because none is needed — Windows signs the `.exe`, whose hash does not
+cover the JavaScript resources beside it.
+
+**Linux — `desktop/freebuff-adblock-linux.sh`.** The same `sh` + `perl` harness
+as the macOS tool and the same two anchors — but the shape of the thing it patches
+is different, and that is what rewrote the workflow. Freebuff for Linux ships as
+an **AppImage**: a single executable holding a read-only SquashFS filesystem, with
+no fixed install directory beside it, and the files inside are reachable only
+through the mounted image. There is nothing in place to patch.
+
+```sh
+curl -fsSL https://freebuff-adblocker.vercel.app/downloads/freebuff-adblock-desktop-linux.sh | sh
+
+sh freebuff-adblock-linux.sh status    # what is applied, change nothing
+sh freebuff-adblock-linux.sh verify    # wait for the relaunch, check what it loaded
+sh freebuff-adblock-linux.sh scan      # every anchor this build has, change nothing
+sh freebuff-adblock-linux.sh install   # extract, patch the copy, leave the image alone
+sh freebuff-adblock-linux.sh revert    # put the extracted copy back
+sh freebuff-adblock-linux.sh doctor    # environment report, for a bug report
+```
+
+`install` never writes to your download. It extracts the image into
+`~/.local/share/freebuff-adblock/<version>/` using the runtime the image itself
+carries — no FUSE, no `squashfs-tools`, no root — patches that copy, and prints
+the path to start instead. Your original `.AppImage` stays byte-identical and is
+the unpatched fallback. Point it at a directory instead (`--app
+/path/to/squashfs-root`, or an AppDir you unpacked yourself) and it patches in
+place, exactly like the macOS tool; pointing that at a system-wide `/opt` or
+`/usr` install is the one case that needs `sudo`, and the tool says so rather
+than escalating on its own.
+
+The Linux build was not assumed to match. The real 0.0.164 AppImage was
+downloaded and opened: both anchors are a **single literal hit** there, the same
+counts as the macOS bundle, and the patch applies and reverts byte-identically on
+it — which is why the anchors are shared rather than re-derived. The 0.0.87 build
+still served on the appimage download path does *not* match (zero literal hits),
+and the tool refuses it by name instead of half-patching: the first thing to check
+when a report says `not found` is which version you actually have.
 
 `status` and `scan` read the file. `verify` is the one that answers the question
 no file can: whether the app you have open is running it. The orchestrator is read
@@ -195,10 +266,15 @@ afterwards, and if the result disagrees the pristine copy goes straight back.
 
 Everything under this product ships under **one version**. The extension and the
 desktop tool are inspected together and released together, so the number in
-`extension/manifest.json` names the browser packages, the desktop tool and its
-package, the update feed and the tag on the site. `1.4.0` introduced relaxed
-anchors and `scan`; **`1.4.1` is the release re-anchored for Freebuff Desktop
-0.0.164**, which dropped one of the two render gates and moved the ad helpers.
+`extension/manifest.json` names the browser packages, the desktop tools and their
+packages, the update feed and the tag on the site. `1.4.0` introduced relaxed
+anchors and `scan`; `1.4.1` re-anchored both tools for Freebuff Desktop
+**0.0.164**, which dropped one of the two render gates and moved the ad helpers;
+`1.4.2` added the relaunch check. `1.5.0` shipped the Windows tool, carrying the
+same two anchors as the macOS one. **`1.6.0` ships the Linux tool**, the third
+build of the same harness and the same anchors — verified against the real Linux
+0.0.164 AppImage — so a build that needs re-anchoring reports it the same way on
+all three platforms.
 
 When a patch still reports `not found`, that is the new build telling you where
 it is: `scan` prints every candidate site it can see for each anchor — literal
@@ -212,19 +288,33 @@ Because the patches sit on the render entry points and the two request helpers,
 they cover *any* slot the app renders, including ones added in a Freebuff release
 this repo has never seen.
 
-It writes inside an app bundle, so macOS App Management has to allow it. When
+On macOS it writes inside an app bundle, so App Management has to allow it. When
 that is what blocked the write, the tool prints the exact System Settings path
 instead of failing halfway through. It never asks for a password and never uses
-`sudo`.
+`sudo`. On Windows it builds the new file beside the original and moves it into
+place with a same-volume replace, so the write is either the whole patch or none
+of it, and it will not rewrite a file it cannot read as UTF-8 — a UTF-16 or
+otherwise mis-encoded bundle is refused with the reason rather than re-encoded.
+On Linux it writes to a tree it extracted itself under `~/.local/share`, so there
+is no system location involved unless you deliberately point it at one.
 
 Two things it cannot do anything about, both stated on the install page:
 Freebuff has to be quit and reopened after patching, because the orchestrator is
 read once at launch; and every Freebuff update replaces `Resources/`, so the
 patch is gone after one and the tool has to be run again.
 
-`npm run test:desktop` exercises the whole thing against a throwaway bundle in a
-temp directory: patch, idempotence, revert, `--display-only`, the refusal path,
-and `--dry-run`. It never touches `/Applications` or the real backup folder.
+`npm run test:desktop`, `npm run test:windows` and `npm run test:linux` exercise
+all three tools against a throwaway bundle in a temp directory — the same bundle,
+built from one shared fixture, so they can never be tested against different
+shapes: patch, idempotence, revert, display-only, the refusal path, `--dry-run`,
+the relaunch verification against a real stand-in process, and (on Windows) a 9 MB
+bundle timed end to end. None of them touches `/Applications`, a real Freebuff
+install, or the real backup folder. The Windows suite runs under PowerShell and
+skips itself when there is none: `pwsh` is PowerShell 7, and Windows PowerShell
+5.1 is `powershell`. The Linux suite builds a real AppImage-shaped fixture — a
+compiled ELF runtime with the extraction stub plus a SquashFS payload — so the
+image path, the extraction refusal and the "never write to the image" property are
+tested as the thing they are, not mocked.
 
 Patching a third-party app's bundled code may conflict with that app's terms of
 service. That is on the person running it, which is why nothing here does it
@@ -298,12 +388,20 @@ scripts/            zero-dependency build tooling
   png.mjs             minimal PNG encoder + icon artwork
   store-assets.mjs    promo tile, marquee, and the four listing screenshots
   gen-icons.mjs       force-regenerate icons
-  build-desktop.mjs   stamps + packages the desktop tool into site/downloads
-  test-desktop.mjs    desktop tool checks, against a throwaway bundle
-desktop/            the macOS patch tool for the desktop app
-  freebuff-adblock.sh      install / status / verify / revert / doctor; the shipped file
-  Freebuff AdBlock.command double-click launcher, packaged in the zip
-  INSTALL.txt              the read-me that travels with the zip
+  build-desktop.mjs   stamps + packages all three desktop tools into site/downloads
+  desktop-fixtures.mjs the 0.0.164-shaped bundle every desktop suite patches
+  test-desktop.mjs    macOS tool checks, against a throwaway bundle
+  test-desktop-windows.mjs  the same, for the PowerShell tool
+  test-desktop-linux.mjs    the same, for the Linux tool - AppImage and AppDir
+desktop/            the patch tools for the desktop app
+  freebuff-adblock.sh        macOS: install / status / verify / revert / doctor; the shipped file
+  Freebuff AdBlock.command   double-click launcher, packaged in the macOS zip
+  INSTALL.txt                the read-me that travels with the macOS zip
+  freebuff-adblock.ps1       Windows: the same commands in PowerShell; the shipped file
+  Freebuff AdBlock.cmd       double-click launcher, packaged in the Windows zip
+  INSTALL-windows.txt        the read-me that travels with the Windows zip
+  freebuff-adblock-linux.sh  Linux: the same commands, for an AppImage or an AppDir
+  INSTALL-linux.txt          the read-me that travels with the Linux zip
 site/               the install page and everything it serves
   index.html          markup; the version is stamped in at build time
   styles.css
@@ -323,16 +421,19 @@ packaging step is plain Node rather than a `zip` shell-out.
 ## Commands
 
 ```sh
-npm run build     # package both zips -> site/downloads, write site/update.xml, emit dist/
+npm run build     # package every zip -> site/downloads, write site/update.xml, emit dist/
 npm run preview   # build, then serve dist/ on 0.0.0.0:$PORT (default 4173)
 npm run icons     # force-regenerate extension/icons
 npm run assets    # redraw the store art: promo tile, marquee, screenshots
 npm run check     # syntax-check the build tooling
-npm run validate  # static checks: manifest, icons, DNR rules, selectors, desktop tool
+npm run validate  # static checks: manifest, icons, DNR rules, selectors, all three desktop tools
 npm test          # jsdom checks for the content script and the install page,
-                  # then the desktop tool's shell checks
-                  # (jsdom needs `npm i --no-save jsdom`)
-npm run test:desktop  # just the desktop tool checks - no jsdom, no app bundle
+                  # then the shell, PowerShell and Linux desktop checks
+                  # (jsdom needs `npm i --no-save jsdom`; the Windows suite needs pwsh)
+npm run test:desktop  # just the macOS tool checks - no jsdom, no app bundle
+npm run test:windows  # just the Windows tool checks - needs pwsh
+npm run test:linux    # just the Linux tool checks - compiles its AppImage stand-in when a
+                      # C compiler is present, and says so and skips those checks when not
 ```
 
 ## Hosting
@@ -361,12 +462,13 @@ update themselves.
 
 ## Scope
 
-Two apps, two tools. The **web version** is covered by the extension in
-`extension/`, which can only reach pages Chromium renders, so it stops there.
-The **desktop app** is a separate bundle with no extension surface, so it is
-covered by the local tool in `desktop/` instead. Neither has a server, an account
-or a telemetry endpoint, and neither touches anything but freebuff.com and the
-machine it runs on.
+Two apps, one idea, and a tool for each. The **web version** is covered by the
+extension in `extension/`, which can only reach pages Chromium renders, so it
+stops there. The **desktop app** is a separate bundle with no extension surface,
+so it is covered by the tools in `desktop/` instead — one build per platform,
+for macOS, Windows and Linux, sharing one anchor set. Neither has a server, an
+account or a telemetry endpoint, and neither touches anything but freebuff.com
+and the machine it runs on.
 
 ## License
 

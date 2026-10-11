@@ -10,6 +10,7 @@
 
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -702,7 +703,11 @@ function checkVersionLabels(manifest) {
     `freebuff-adblock-${version}-store.zip`,
     `freebuff-adblock-${version}-firefox.zip`,
     `freebuff-adblock-desktop-${version}.zip`,
+    `freebuff-adblock-desktop-${version}-windows.zip`,
+    `freebuff-adblock-desktop-${version}-linux.zip`,
     'freebuff-adblock-desktop.sh',
+    'freebuff-adblock-desktop.ps1',
+    'freebuff-adblock-desktop-linux.sh',
   ];
   const downloads = fs.readdirSync(path.join(SITE, 'downloads'));
   const absent = expected.filter((name) => !downloads.includes(name));
@@ -844,6 +849,362 @@ function checkStoreAssets() {
 /* ----------------------------------------------------------------- desktop */
 
 /**
+ * PowerShell, wherever this host keeps it. Windows PowerShell 5.1 is
+ * `powershell` and ships with Windows; `pwsh` is PowerShell 7. Either runs the
+ * tool, so either is accepted, and its absence only skips the parse check.
+ */
+function findPowerShell() {
+  const candidates = [
+    process.env.FBD_PWSH,
+    'pwsh',
+    'pwsh.exe',
+    'powershell',
+    'powershell.exe',
+    path.join(os.homedir(), '.local', 'pwsh', 'pwsh'),
+    '/usr/local/bin/pwsh',
+    '/opt/microsoft/powershell/7/pwsh',
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    const probe = spawnSync(candidate, ['-NoLogo', '-NoProfile', '-Command', '$PSVersionTable.PSVersion.ToString()'], {
+      encoding: 'utf8',
+      timeout: 60000,
+      env: { ...process.env, DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: '1' },
+    });
+    if (probe.status === 0) return candidate;
+  }
+  return null;
+}
+
+/**
+ * The Windows tool. It patches the same two anchors in the same bundle as the
+ * shell tool, in a language that has to be told everything the shell was not, so
+ * the checks are the shell ones again plus the three things that only exist here:
+ * the two build-time placeholders, a refusal that names the problem in the counts
+ * it saw, and a wait that can never fail a patch that already succeeded.
+ *
+ * The anchors are asserted as strings rather than trusted: the whole point of the
+ * port is that they are the *same* anchors as the macOS tool, not a fresh guess,
+ * and a silent drift between the two would be invisible until someone's Freebuff
+ * stopped being patched.
+ */
+/**
+ * The Linux tool.
+ *
+ * It is the same engine as the macOS tool by construction - the file was copied
+ * from it and the platform layer rewritten - so the interesting assertion here is
+ * that the perl payload is *byte-identical* between the two. Two scripts with one
+ * engine is only acceptable while that stays true; the moment someone edits one
+ * and not the other, this fails.
+ */
+function engineOf(source) {
+  const start = source.indexOf('cat > "$prog" <<\'FBD_PERL\'');
+  const end = source.indexOf('\nFBD_PERL\n', start);
+  if (start === -1 || end === -1) return null;
+  return source.slice(start, end);
+}
+
+function checkDesktopLinux() {
+  console.log('\nlinux desktop tool');
+
+  const file = path.join(ROOT, 'desktop', 'freebuff-adblock-linux.sh');
+  if (!fs.existsSync(file)) {
+    fail('desktop/freebuff-adblock-linux.sh is missing - the Linux tool does not ship');
+    return;
+  }
+  pass('desktop/freebuff-adblock-linux.sh exists');
+
+  const source = fs.readFileSync(file, 'utf8');
+  const macSource = fs.readFileSync(path.join(ROOT, 'desktop', 'freebuff-adblock.sh'), 'utf8');
+
+  for (const token of ['__FBD_VERSION__', '__FBD_ORIGIN__']) {
+    source.includes(token)
+      ? pass(`build placeholder ${token} is present for build-desktop.mjs to fill in`)
+      : fail(`${token} is gone - the Linux tool would ship without its version or origin`);
+  }
+
+  for (const id of ['render', 'request']) {
+    source.includes(`FBD-ADS-OFF:${id}`)
+      ? pass(`patch "${id}" is defined`)
+      : fail(`patch "${id}" is missing from the Linux tool`);
+  }
+
+  source.includes('FBD-ADS-OFF:post')
+    ? fail('a "post" anchor is back in the Linux tool - it can only match helpers that are not the ad path')
+    : pass('no "post" anchor in the Linux tool either');
+
+  // The one that matters most: one engine, two scripts, no drift.
+  const macEngine = engineOf(macSource);
+  const linuxEngine = engineOf(source);
+  if (!macEngine || !linuxEngine) {
+    fail('the perl engine block could not be found in one of the two shell tools');
+  } else if (macEngine === linuxEngine) {
+    pass(`the perl engine is byte-identical between the macOS and Linux tools (${linuxEngine.length} bytes)`);
+  } else {
+    fail('the macOS and Linux tools now carry different perl engines - the anchors would drift apart silently');
+  }
+
+  // The AppImage rule. There is no patchable file inside a read-only SquashFS, so
+  // the tool must extract rather than edit, and it must do it with the runtime
+  // the image carries rather than a package the user has to install.
+  source.includes('--appimage-extract')
+    ? pass('it extracts an AppImage with the image\'s own runtime')
+    : fail('the Linux tool no longer extracts AppImages - there is nothing it could patch');
+
+  source.includes('resolve_app') && source.includes('is_tree') && source.includes('extract_image')
+    ? pass('it tells an AppImage from an AppDir before it writes anything')
+    : fail('the Linux tool does not resolve image-vs-directory, so it may write to the wrong thing');
+
+  /--work-dir/.test(source)
+    ? pass('the extracted copy has its own directory, overridable with --work-dir')
+    : fail('the Linux tool has nowhere to put an extracted AppImage');
+
+  source.includes('AppRun')
+    ? pass('install says which extracted copy to start')
+    : fail('the Linux tool never names the AppRun it patched - the patch would be unreachable');
+
+  // It patches a copy the user owns, so it must never reach for privilege - and
+  // where a system install would need it, the help says so instead.
+  /^\s*sudo\s/m.test(source)
+    ? fail('the Linux tool runs sudo - it must never need a password')
+    : pass('the Linux tool never escalates with sudo');
+
+  // The macOS tool's `verify` contract, kept: documented in the help text and
+  // reachable from the dispatcher.
+  source.includes('verify    wait for Freebuff') && /^\s*verify\)\s+cmd_verify/m.test(source)
+    ? pass('`verify` is documented in the help text and dispatched')
+    : fail('`verify` is missing from the Linux help text or the command dispatch');
+
+  // Bounded and interruptible, exactly as on macOS: PowerShell could not honour
+  // an interrupt, but a shell can, and this tool relies on it.
+  /^WAIT_SECS=\d+$/m.test(source) && source.includes("trap 'interrupted=1' INT")
+    ? pass('the relaunch wait has a default timeout and Ctrl-C stops it')
+    : fail('the Linux relaunch wait has no default timeout, or cannot be interrupted');
+
+  // A refusal has to explain itself and offer the command a piped user can run -
+  // and the piped form has to be the Linux tool's own URL, not the macOS one.
+  source.includes('trusted as written') && source.includes('$r->{notes}')
+    ? pass('a refusal carries the per-anchor counts')
+    : fail('the Linux refusal no longer says why an anchor did not fit');
+
+  source.includes('| sh -s scan') && source.includes('downloads/freebuff-adblock-desktop-linux.sh')
+    ? pass('the Linux refusal offers the piped scan at the Linux tool\'s own URL')
+    : fail('the Linux refusal points at the wrong script, or offers no piped scan');
+
+  source.includes('Refusing to patch')
+    ? pass('the Linux tool refuses to patch an unrecognised file')
+    : fail('the Linux tool no longer refuses an unrecognised orchestrator.js');
+
+  const syntax = spawnSync('sh', ['-n', file], { encoding: 'utf8' });
+  if (syntax.status === 0) pass('the Linux tool passes `sh -n`');
+  else fail(`the Linux tool has a shell syntax error: ${(syntax.stderr || '').trim()}`);
+}
+
+/**
+ * What a downloaded zip calls its tools, against what the zip tells you to run.
+ *
+ * This exists because it was wrong. The packaging step once named each sh tool
+ * after the file it *serves* (`freebuff-adblock-desktop.sh`), while INSTALL.txt,
+ * the tool's own `Usage:` block and the install page all said
+ * `sh freebuff-adblock.sh` - so a reader who took the download, followed the
+ * read-me and typed the command it gave them got "No such file". On macOS it was
+ * worse than a typo: the double-clickable `.command` launcher runs
+ * `sh ./freebuff-adblock.sh install`, so it failed at the one thing it is for.
+ *
+ * The rule is therefore: the name a zip carries is the name every instruction
+ * beside it uses. Checked statically - the read-mes, the launchers and the tools'
+ * own help text are all files in the tree, and reading them needs no build.
+ */
+function checkDesktopPackaging() {
+  console.log('\ndesktop packages');
+
+  const read = (relative) => fs.readFileSync(path.join(ROOT, relative), 'utf8');
+  const buildSource = read('scripts/build-desktop.mjs');
+
+  const constant = (name) => {
+    const found = buildSource.match(new RegExp(`const ${name} = '([^']+)'`));
+    return found ? found[1] : null;
+  };
+
+  const macZipName = constant('ZIP_TOOL_NAME');
+  const linuxZipName = constant('ZIP_LINUX_TOOL_NAME');
+
+  if (!macZipName || !linuxZipName) {
+    fail('build-desktop.mjs no longer declares the names its zips carry - the read-mes cannot be checked');
+    return;
+  }
+
+  // Every `sh <something>.sh` an instruction tells the reader to run, collected
+  // from one file. A url is never a match: the token before it is not `sh`.
+  const shellCommands = (text) =>
+    new Set((text.match(/sh (?:\.\/)?freebuff-adblock[A-Za-z0-9._-]*\.sh/g) || []).map((hit) => hit.replace(/^sh (?:\.\/)?/, '')));
+
+  const check = (label, text, expected) => {
+    const found = [...shellCommands(text)];
+    if (!found.length) {
+      fail(`${label} tells the reader to run no shell tool at all`);
+      return;
+    }
+    const strays = found.filter((name) => name !== expected);
+    strays.length
+      ? fail(`${label} tells the reader to run ${strays.join(', ')}, but the zip carries ${expected}`)
+      : pass(`${label} names the file its zip carries (${expected})`);
+  };
+
+  check('desktop/INSTALL.txt', read('desktop/INSTALL.txt'), macZipName);
+  check('desktop/INSTALL-linux.txt', read('desktop/INSTALL-linux.txt'), linuxZipName);
+  check('the Linux tool\'s own help', read('desktop/freebuff-adblock-linux.sh'), linuxZipName);
+  check('the macOS tool\'s own help', read('desktop/freebuff-adblock.sh'), macZipName);
+
+  // The macOS launcher is the one place this runs by itself, so its reference is
+  // checked literally rather than through the collector above.
+  read('desktop/Freebuff AdBlock.command').includes(`sh ./${macZipName}`)
+    ? pass(`the .command launcher runs the file the zip carries (sh ./${macZipName})`)
+    : fail(`the .command launcher does not run sh ./${macZipName} - double-clicking it would fail`);
+
+  // Windows has always been consistent, and that consistency is the reason the
+  // other two are checked at all.
+  read('desktop/Freebuff AdBlock.cmd').includes('freebuff-adblock-desktop.ps1')
+    ? pass('the .cmd launcher runs the .ps1 the zip carries')
+    : fail('the .cmd launcher names a .ps1 that the zip does not carry');
+}
+
+function checkDesktopPowerShell() {
+  console.log('\nwindows desktop tool');
+
+  const file = path.join(ROOT, 'desktop', 'freebuff-adblock.ps1');
+  if (!fs.existsSync(file)) {
+    fail('desktop/freebuff-adblock.ps1 is missing - the Windows tool does not ship');
+    return;
+  }
+  pass('desktop/freebuff-adblock.ps1 exists');
+
+  const source = fs.readFileSync(file, 'utf8');
+
+  // PowerShell 5.1 is what she ships with, so a 5.1 host has to get a clear
+  // "needs 5.1" rather than a parse error from newer syntax.
+  source.includes('#Requires -Version 5.1')
+    ? pass('the Windows tool declares the PowerShell version it needs')
+    : fail('desktop/freebuff-adblock.ps1 no longer declares #Requires -Version 5.1');
+
+  for (const token of ['__FBD_VERSION__', '__FBD_ORIGIN__']) {
+    source.includes(token)
+      ? pass(`build placeholder ${token} is present for build-desktop.mjs to fill in`)
+      : fail(`${token} is gone - the Windows tool would ship without its version or origin`);
+  }
+
+  for (const id of ['render', 'request']) {
+    source.includes(`FBD-ADS-OFF:${id}`)
+      ? pass(`patch "${id}" is defined`)
+      : fail(`patch "${id}" is missing from the Windows tool`);
+  }
+
+  source.includes('FBD-ADS-OFF:post')
+    ? fail('a "post" anchor is back in the Windows tool - it can only match helpers that are not the ad path')
+    : pass('no "post" anchor in the Windows tool either');
+
+  // The three anchors themselves, exactly as the shell tool carries them. The
+  // two literals are what the tool was verified against on 0.0.164; the relaxed
+  // ones are what keeps a rename from bricking it.
+  const anchors = [
+    'if (localAgenticTestCampaign(process.env))',
+    'async request\\(method, [A-Za-z_$][\\w$]*, payload, timeoutMs = REQUEST_TIMEOUT_MS\\) \\{',
+    '(?<![.\\w$])(?:(?:async|static)\\s+)*request\\s*\\([^)]*\\)\\s*\\{',
+  ];
+  for (const anchor of anchors) {
+    source.includes(anchor)
+      ? pass(`anchor ${anchor.slice(0, 32)}… matches the macOS tool`)
+      : fail(`the Windows tool lost an anchor the macOS tool still carries: ${anchor}`);
+  }
+
+  // A refusal has to explain itself with the counts, and offer the piped command
+  // a person who ran the one-liner can actually paste.
+  source.includes('trusted as written') && source.includes('match(es)')
+    ? pass('a refusal carries the per-anchor counts')
+    : fail('the Windows refusal no longer says why an anchor did not fit');
+
+  source.includes('freebuff-adblock-desktop.ps1') && source.includes('scriptblock')
+    ? pass('the refusal offers the piped scan, for people with no local copy')
+    : fail('the Windows refusal only offers the local form, which a piped run cannot use');
+
+  source.includes('Refusing to patch')
+    ? pass('the Windows tool refuses to patch an unrecognised file')
+    : fail('the Windows tool no longer refuses an unrecognised orchestrator.js');
+
+  /Start-Process[^\n]*RunAs|^\s*sudo\s/m.test(source)
+    ? fail('the Windows tool elevates by itself - it must never need a password')
+    : pass('the Windows tool never escalates on its own');
+
+  // It must not rewrite a file in an encoding it did not read, and it must not
+  // write through a bundle it cannot parse as UTF-8.
+  source.includes('is not valid UTF-8') && source.includes('UTF-16')
+    ? pass('a file that is not UTF-8 is refused rather than re-encoded')
+    : fail('the Windows tool would rewrite a file it cannot read as UTF-8');
+
+  source.includes('[System.IO.File]::Replace')
+    ? pass('the write replaces the file in place, keeping its ACL and attributes')
+    : fail('the Windows tool writes in a way that can lose the file ACL');
+
+  source.includes('ERROR_SHARING_VIOLATION')
+    ? pass('a locked file is reported as Freebuff holding it, not as a permissions problem')
+    : fail('the Windows tool cannot tell a share violation from a permission problem');
+
+  source.includes('@codebufffreebuff-desktop')
+    ? pass('the tool knows the per-user install folder the Windows build uses')
+    : fail('the Windows tool no longer looks in %LOCALAPPDATA%\\Programs for the app');
+
+  // `verify` is the half no file on disk can answer, and the page tells people to
+  // use it. It has to exist in the help text and in the dispatch, or the page and
+  // the tool disagree about what the tool does.
+  source.includes('verify    wait for Freebuff') && /'verify'\s*\{\s*Invoke-Verify/.test(source)
+    ? pass('`verify` is documented in the help text and dispatched')
+    : fail('`verify` is missing from the Windows help text or the command dispatch');
+
+  // Bounded, and honest about how it ends. There is no Ctrl-C handler here on
+  // purpose: measured with pwsh, a CancelKeyPress handler written as a script
+  // block never gets to run - the signal arrives on a thread with no runspace, so
+  // PowerShell answers with an unhandled PSInvalidOperationException and the
+  // process dies of SIGABRT. A compiled .NET delegate does run (Add-Type) but
+  // cannot set the status: PowerShell still exits 0 for an interrupted run. So
+  // Ctrl-C does the stopping, as PowerShell's own behaviour, and the budget below
+  // brings an unattended run back. `test-desktop-windows.mjs` covers both halves -
+  // the bound with a short -Timeout, the interruption by sending the signal.
+  /^\s*\$WaitSecs = \d+$/m.test(source) && /\$remaining -= \d+/.test(source)
+    ? pass('the relaunch wait has a default timeout, so an unattended run comes back')
+    : fail('the Windows relaunch wait is unbounded');
+
+  !source.includes('add_CancelKeyPress') && source.includes('Ctrl-C')
+    ? pass('Ctrl-C ends the wait, and no handler that would crash on the signal thread is registered')
+    : fail('the Windows wait registers a CancelKeyPress handler, or never mentions Ctrl-C');
+
+  // And it must only ever wait for a relaunch that can happen, and never let a
+  // timeout turn a successful patch into a failure. The discarded result is the
+  // point: `| Out-Null` is what makes a timed-out wait harmless.
+  /if \(\$Wait\) \{\s*\n\s*Wait-ForRelaunch[^\n]*\| Out-Null/.test(source) && source.includes('if ($running) {')
+    ? pass('install waits only when Freebuff is open, and a timed-out wait cannot fail it')
+    : fail('install can wait with Freebuff closed, or lets a timed-out wait fail the patch');
+
+  // The one check that needs PowerShell itself: does the file parse at all. A
+  // syntax error here would be a tool that cannot start on the machine that needs
+  // it, which no string check above would catch.
+  const pwsh = findPowerShell();
+  if (!pwsh) {
+    console.log('  (no PowerShell on this host - skipping the parse check)');
+  } else {
+    const script =
+      `$errors = $null; [void][System.Management.Automation.Language.Parser]::ParseFile(` +
+      `'${file.replace(/'/g, "''")}', [ref]$null, [ref]$errors); ` +
+      `if ($errors.Count) { $errors | ForEach-Object { $_.Message }; exit 1 }`;
+    const parsed = spawnSync(pwsh, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], {
+      encoding: 'utf8',
+      env: { ...process.env, DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: '1' },
+    });
+    if (parsed.status === 0) pass(`the Windows tool parses (${path.basename(pwsh)})`);
+    else fail(`the Windows tool has a PowerShell syntax error: ${(parsed.stdout || parsed.stderr || '').trim()}`);
+  }
+}
+
+/**
  * The desktop tool ships as a shell script that edits a bundle on someone
  * else's machine, so the two things that must never quietly drift are its
  * fail-safe (it refuses when the anchors do not match) and its two build-time
@@ -930,7 +1291,11 @@ function checkDesktop(manifest) {
   if (syntax.status === 0) pass('the desktop tool passes `sh -n`');
   else fail(`the desktop tool has a shell syntax error: ${(syntax.stderr || '').trim()}`);
 
-  // The install page has to actually offer it, or the tool is unreachable.
+  checkDesktopPackaging();
+  checkDesktopPowerShell();
+  checkDesktopLinux();
+
+  // The install page has to actually offer them, or the tools are unreachable.
   const html = fs.readFileSync(path.join(ROOT, 'site', 'index.html'), 'utf8');
 
   html.includes('id="desktop"')
@@ -941,15 +1306,39 @@ function checkDesktop(manifest) {
     ? pass('the desktop one-liner and package are wired into the page')
     : fail('site/index.html no longer carries the desktop command and zip hooks');
 
-  for (const part of ['freebuff-adblock-desktop.sh', 'freebuff-adblock-desktop-']) {
+  for (const part of [
+    'freebuff-adblock-desktop.sh',
+    'freebuff-adblock-desktop.ps1',
+    'freebuff-adblock-desktop-linux.sh',
+    'freebuff-adblock-desktop-',
+    'data-desktop-win-command',
+    'data-desktop-win-zip',
+    'data-desktop-linux-command',
+    'data-desktop-linux-zip',
+  ]) {
     html.includes(part)
       ? pass(`the page references ${part}`)
       : fail(`site/index.html no longer references ${part}`);
   }
 
-  // The platform switch. macOS is the only build, so exactly one tab may be
-  // selectable and the other two must stay disabled - an enabled tab with no
-  // panel behind it is a control that does nothing when clicked.
+  // The Windows one-liner is the one thing a reader is told to paste, so what is
+  // on the page has to be the runnable shape: whatever it fetches, piped into iex.
+  const winCommand = (html.match(/<code data-desktop-win-command>([^<]*)<\/code>/) || [])[1] || '';
+  /^irm \S+ \| iex$/.test(winCommand.trim())
+    ? pass(`the Windows one-liner is the piped form (${winCommand.trim()})`)
+    : fail(`the Windows one-liner is not "irm <url> | iex": ${JSON.stringify(winCommand.trim())}`);
+
+  // The Linux one-liner is the same shape as the macOS one - a fetch piped into
+  // a shell - but it has to name the Linux script, or a Linux reader is handed a
+  // macOS tool.
+  const linuxCommand = (html.match(/<code data-desktop-linux-command>([^<]*)<\/code>/) || [])[1] || '';
+  /^curl -fsSL \S+downloads\/freebuff-adblock-desktop-linux\.sh \| sh$/.test(linuxCommand.trim())
+    ? pass(`the Linux one-liner fetches the Linux tool (${linuxCommand.trim()})`)
+    : fail(`the Linux one-liner is not "curl -fsSL <linux tool> | sh": ${JSON.stringify(linuxCommand.trim())}`);
+
+  // The platform switch. macOS and Windows have a tool, Linux does not, so exactly
+  // those two tabs may be selectable and Linux must stay disabled - an enabled tab
+  // with no panel behind it is a control that does nothing when clicked.
   const tabs = [...html.matchAll(/data-platform="([a-z]+)"([^>]*)>/g)].map((m) => ({
     name: m[1],
     disabled: /\bdisabled\b/.test(m[2]),
@@ -974,17 +1363,31 @@ function checkDesktop(manifest) {
 
     const macos = tabs.find((tab) => tab.name === 'macos');
     macos && !macos.disabled
-      ? pass('macOS is the platform on offer today')
-      : fail('the macOS tab is disabled or missing, but the macOS tool is the one that ships');
+      ? pass('the macOS tab is selectable, and the macOS tool ships')
+      : fail('the macOS tab is disabled or missing, but the macOS tool is one that ships');
+
+    const windows = tabs.find((tab) => tab.name === 'windows');
+    windows && !windows.disabled
+      ? pass('the Windows tab is selectable, and the Windows tool ships')
+      : fail('the Windows tab is disabled - the Windows tool is unreachable from the page');
+
+    const linux = tabs.find((tab) => tab.name === 'linux');
+    linux && !linux.disabled
+      ? pass('the Linux tab is selectable, and the Linux tool ships')
+      : fail('the Linux tab is disabled - the Linux tool is unreachable from the page');
   }
 
-  // The desktop package has to be named after the same version the extension
+  // Both desktop packages have to be named after the same version the extension
   // ships under: one product, one release, one number.
-  html.includes(`freebuff-adblock-desktop-${manifest.version}`)
-    ? pass(`the desktop package on the page is named after the app version (${manifest.version})`)
-    : fail(
-        `the desktop section offers a package that is not freebuff-adblock-desktop-${manifest.version}.zip`
-      );
+  for (const name of [
+    `freebuff-adblock-desktop-${manifest.version}.zip`,
+    `freebuff-adblock-desktop-${manifest.version}-windows.zip`,
+    `freebuff-adblock-desktop-${manifest.version}-linux.zip`,
+  ]) {
+    html.includes(name)
+      ? pass(`the page offers ${name}`)
+      : fail(`the desktop section does not offer ${name}`);
+  }
 
   const buildSource = fs.readFileSync(path.join(ROOT, 'scripts', 'build.mjs'), 'utf8');
   buildSource.includes('desktopVersion')

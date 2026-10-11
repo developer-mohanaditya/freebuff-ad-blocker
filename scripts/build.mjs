@@ -222,11 +222,27 @@ function writeDist(version, packageInfo, storeInfo, firefoxInfo, desktop) {
         /href="downloads\/freebuff-adblock-desktop-[\d.]+\.zip"/g,
         `href="${desktop.archive.relativePath}"`
       )
+      .replace(
+        /href="downloads\/freebuff-adblock-desktop-[\d.]+-windows\.zip"/g,
+        `href="${desktop.windowsArchive.relativePath}"`
+      )
+      .replace(
+        /href="downloads\/freebuff-adblock-desktop-[\d.]+-linux\.zip"/g,
+        `href="${desktop.linuxArchive.relativePath}"`
+      )
       .replace(/(<span data-version>)[^<]*(<\/span>)/g, `$1${version}$2`)
       .replace(/(<code data-download-path>)[^<]*(<\/code>)/g, `$1/${packageInfo.relativePath}$2`)
       .replace(
         /(<code data-desktop-command>)[^<]*(<\/code>)/g,
         `$1curl -fsSL ${SITE_ORIGIN}/${desktop.script.relativePath} | sh$2`
+      )
+      .replace(
+        /(<code data-desktop-win-command>)[^<]*(<\/code>)/g,
+        `$1irm ${SITE_ORIGIN}/${desktop.windowsScript.relativePath} | iex$2`
+      )
+      .replace(
+        /(<code data-desktop-linux-command>)[^<]*(<\/code>)/g,
+        `$1curl -fsSL ${SITE_ORIGIN}/${desktop.linuxScript.relativePath} | sh$2`
       );
 
   // Every page, not just index.html. The navbar and footer carry the versions
@@ -264,6 +280,10 @@ function writeDist(version, packageInfo, storeInfo, firefoxInfo, desktop) {
         firefox: firefoxInfo ? firefoxInfo.relativePath : null,
         desktop: desktop ? desktop.script.relativePath : null,
         desktopZip: desktop ? desktop.archive.relativePath : null,
+        desktopWindows: desktop ? desktop.windowsScript.relativePath : null,
+        desktopWindowsZip: desktop ? desktop.windowsArchive.relativePath : null,
+        desktopLinux: desktop ? desktop.linuxScript.relativePath : null,
+        desktopLinuxZip: desktop ? desktop.linuxArchive.relativePath : null,
         origin: SITE_ORIGIN,
       },
       null,

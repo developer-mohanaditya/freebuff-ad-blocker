@@ -243,10 +243,25 @@ const headline = page.document.querySelector('h1').textContent.replace(/\s+/g, '
 
 check('the hero says the ads disappear', headline, 'The ads disappear. The build keeps streaming.');
 check('"How to install" is gone from the hero', page.heroLinks.filter((a) => a.getAttribute('href') === '#install').length, 0);
+/** Which panel a reader is actually looking at, by name. */
+const shownPanel = (view) =>
+  [...view.document.querySelectorAll('[data-platform-panel]')]
+    .filter((p) => !p.hidden)
+    .map((p) => p.dataset.platformPanel)
+    .join(',');
+
 check('three platform tabs are offered', page.tabs.length, 3);
-check('macOS is the one that is selectable', page.tabs.filter((t) => !t.disabled).map((t) => t.dataset.platform).join(','), 'macos');
-check('windows and linux are disabled', page.tabs.filter((t) => t.disabled).map((t) => t.dataset.platform).join(','), 'windows,linux');
-check('the macOS panel is the one on screen', page.document.querySelectorAll('[data-platform-panel]:not([hidden])').length, 1);
+check(
+  'all three are selectable - every one has a tool',
+  page.tabs.filter((t) => !t.disabled).map((t) => t.dataset.platform).join(','),
+  'macos,windows,linux'
+);
+check('none of them is disabled', page.tabs.filter((t) => t.disabled).length, 0);
+check('exactly one panel is on screen', page.document.querySelectorAll('[data-platform-panel]:not([hidden])').length, 1);
+// The reader is handed the build they can use rather than the first one in the
+// markup: CHROME above is a Windows user agent, so Windows is what must open.
+check('a Windows reader opens on the Windows panel', shownPanel(page), 'windows');
+check('a macOS reader opens on the macOS panel', shownPanel(open({ ua: SAFARI, links: LISTINGS })), 'macos');
 
 // One product, one version: the extension and the desktop tool are inspected
 // and released together, so the tag, the footer and every file name carry the
@@ -259,7 +274,82 @@ check('no second version rides along anywhere', page.document.querySelectorAll('
 const downloads = [...page.document.querySelectorAll('a[href^="downloads/"]')].map((a) => a.getAttribute('href'));
 check(`the extension zip is a ${VERSION} file`, downloads.includes(`downloads/freebuff-adblock-${VERSION}.zip`), true);
 check(`the desktop package is a ${VERSION} file`, downloads.includes(`downloads/freebuff-adblock-desktop-${VERSION}.zip`), true);
+check(
+  `the Windows package is a ${VERSION} file`,
+  downloads.includes(`downloads/freebuff-adblock-desktop-${VERSION}-windows.zip`),
+  true
+);
+check(
+  `the Linux package is a ${VERSION} file`,
+  downloads.includes(`downloads/freebuff-adblock-desktop-${VERSION}-linux.zip`),
+  true
+);
+// Each platform's one-liner is what a reader pastes, so each has to fetch that
+// platform's own tool rather than the first one that happens to be listed.
+const linuxOneLiner = page.document.querySelector('[data-desktop-linux-command]');
+check('the Linux one-liner fetches the Linux tool', /downloads\/freebuff-adblock-desktop-linux\.sh \| sh$/.test(linuxOneLiner.textContent.trim()), true);
+// The .ps1 is deliberately not a download link: it is the thing the one-liner
+// pipes into `iex`, and a browser download of it would attach the
+// mark-of-the-web for no reason. It is named on the page, which is what the
+// command needs.
+check('the Windows tool is named in its one-liner', HTML.includes('downloads/freebuff-adblock-desktop.ps1'), true);
 check(`every named file carries ${VERSION}`, downloads.filter((h) => /\d+\.\d+\.\d+/.test(h)).every((h) => h.includes(VERSION)), true);
+
+/* ------------------------------------------------------- the desktop downloads */
+
+/**
+ * Both desktop panels offer their download the same way, and that way is an
+ * inline link in the fine print - the shape macOS has always had, and the shape a
+ * button here failed to beat: a `.btn` inside a `.panel` renders its label
+ * invisibly, because `.panel a` sets the accent colour at a specificity above
+ * `.btn-primary`, and that shipped once as an empty orange pill. Asserted for both
+ * panels, so the two cannot drift apart without this failing.
+ */
+console.log('\nthe desktop downloads match');
+const macZip = page.document.querySelector('[data-platform-panel="macos"] [data-desktop-zip]');
+const winZip = page.document.querySelector('[data-platform-panel="windows"] [data-desktop-win-zip]');
+const linuxZip = page.document.querySelector('[data-platform-panel="linux"] [data-desktop-linux-zip]');
+const zipLinks = { macos: macZip, windows: winZip, linux: linuxZip };
+
+for (const [name, link] of Object.entries(zipLinks)) {
+  check(`the ${name} panel offers its download`, link !== null, true);
+}
+
+// Guarded rather than chained: a missing link is one clear failure, not a
+// TypeError that takes the rest of the run with it.
+if (macZip && winZip && linuxZip) {
+  check(
+    'all three are inline links, not buttons',
+    [macZip, winZip, linuxZip].map((a) => a.classList.contains('btn')).join(','),
+    'false,false,false'
+  );
+  check(
+    'all three sit in the fine print beside the one-liner',
+    [macZip, winZip, linuxZip].map((a) => a.parentElement.className).join(','),
+    'fine,fine,fine'
+  );
+  check(
+    'and each points at its own versioned package',
+    [macZip, winZip, linuxZip].map((a) => a.getAttribute('href')).join(','),
+    [
+      `downloads/freebuff-adblock-desktop-${VERSION}.zip`,
+      `downloads/freebuff-adblock-desktop-${VERSION}-windows.zip`,
+      `downloads/freebuff-adblock-desktop-${VERSION}-linux.zip`,
+    ].join(',')
+  );
+  check(
+    'all three download rather than navigate',
+    [macZip, winZip, linuxZip].map((a) => a.hasAttribute('download')).join(','),
+    'true,true,true'
+  );
+} else {
+  console.log('  ..    the parity checks need all three links, so they were skipped');
+}
+
+// The button no longer exists, so the guard in styles.css must not be relying on
+// one: no `.btn` may sit inside any panel, which is what makes that rule inert.
+const buttonsInPanels = [...page.document.querySelectorAll('[data-platform-panel] .btn')];
+check('no button lives inside a platform panel', buttonsInPanels.length, 0);
 
 const footerText = page.document.querySelector('.footer p').textContent.replace(/\s+/g, ' ').trim();
 check('the footer reads the same version', footerText.includes(`Freebuff Ad Block · v${VERSION}`), true);
@@ -271,32 +361,32 @@ check('firefox points at the addons.mozilla.org listing', LIVE.firefox, 'https:/
 /* ------------------------------------------------------------- the switch */
 
 /**
- * The switch only has one platform today, so the interesting behaviour is the
- * one that has no content yet: enable a second tab, give it a panel, and check
- * the control actually swaps them. Otherwise "just add a panel later" is an
- * untested promise.
+ * Two platforms ship now, so the switch is tested against the real page: the tab
+ * for the reader's own platform opens the page, and clicking either tab swaps the
+ * panels and the selected state. Linux has no build, so its tab stays inert - and
+ * that is asserted above, where the disabled set is checked by name.
  */
-console.log('\nwhen a second platform ships');
+console.log('\nthe platform switch');
 
-const secondPlatform = HTML
-  .replace('data-platform="windows"\n            disabled\n', 'data-platform="windows"\n')
-  .replace(
-    '<div class="split" data-platform-panel="macos">',
-    '<div class="split" data-platform-panel="windows" hidden></div><div class="split" data-platform-panel="macos">'
-  );
-
-const switching = open({ ua: CHROME, links: LISTINGS, html: secondPlatform });
+const switching = open({ ua: CHROME, links: LISTINGS });
 const windowsTab = switching.tabs.find((tab) => tab.dataset.platform === 'windows');
+const macosTab = switching.tabs.find((tab) => tab.dataset.platform === 'macos');
 const panel = (name) => switching.document.querySelector(`[data-platform-panel="${name}"]`);
 
-check('its tab can be enabled', windowsTab.disabled, false);
-check('macOS starts out on screen', panel('macos').hidden, false);
+check('it opens on the platform the reader is on', shownPanel(switching), 'windows');
+check('and that platform has a tab that is not disabled', windowsTab.disabled, false);
+
+macosTab.click();
+
+check('clicking a tab shows its panel', panel('macos').hidden, false);
+check('and takes the other one off screen', panel('windows').hidden, true);
+check('the tab itself reads as selected', macosTab.getAttribute('aria-selected'), 'true');
+check('and the one it replaced does not', windowsTab.getAttribute('aria-selected'), 'false');
 
 windowsTab.click();
 
-check('clicking it shows its panel', panel('windows').hidden, false);
-check('and takes macOS off screen', panel('macos').hidden, true);
-check('the tab itself reads as selected', windowsTab.getAttribute('aria-selected'), 'true');
+check('clicking back swaps them again', shownPanel(switching), 'windows');
+check('exactly one panel is on screen after the swap', switching.document.querySelectorAll('[data-platform-panel]:not([hidden])').length, 1);
 
 /* ----------------------------------------------------------- copy buttons */
 
@@ -322,7 +412,11 @@ const secureCopy = open({
 const command = secureCopy.document.querySelector('[data-desktop-command]').textContent.trim();
 const downloadPath = secureCopy.document.querySelector('[data-download-path]').textContent.trim();
 
-check('both copy rows are on the page', secureCopy.copyButtons.length, 2);
+const windowsCommand = secureCopy.document.querySelector('[data-desktop-win-command]').textContent.trim();
+
+const linuxCommand = secureCopy.document.querySelector('[data-desktop-linux-command]').textContent.trim();
+
+check('all four copy rows are on the page', secureCopy.copyButtons.length, 4);
 check('every copy button is labelled Copy', secureCopy.copyButtons.every((b) => b.textContent.trim() === 'Copy'), true);
 
 secureCopy.copyButtons[1].click();
@@ -330,6 +424,25 @@ await settle();
 check('the desktop button copies the command beside it', copied, command);
 check('and the command is the curl one-liner', /^curl -fsSL https:\/\/\S+ \| sh$/.test(copied || ''), true);
 check('the button confirms it copied', secureCopy.copyButtons[1].textContent, 'Copied');
+
+copied = null;
+secureCopy.copyButtons[2].click();
+await settle();
+check('the Windows button copies its own one-liner', copied, windowsCommand);
+check('which is the irm one-liner', /^irm https:\/\/\S+ \| iex$/.test(copied || ''), true);
+
+// The Linux panel's button is the fourth row and its own command: `curl | sh`
+// like the macOS tool, but a different script, so a shared handler that copied
+// the wrong one would show up here.
+copied = null;
+secureCopy.copyButtons[3].click();
+await settle();
+check('the Linux button copies its own one-liner', copied, linuxCommand);
+check(
+  'which is the Linux script, not the macOS one',
+  copied !== command && /-desktop-linux\.sh/.test(copied || ''),
+  true
+);
 
 copied = null;
 secureCopy.copyButtons[0].click();
@@ -399,7 +512,17 @@ console.log('\na stale cache is healed from version.json');
 const cached = new JSDOM(HTML, { runScripts: 'dangerously', url: 'https://example.test/' });
 cached.window.fetch = async () => ({
   ok: true,
-  json: async () => ({ version: '9.9.9', zip: 'downloads/freebuff-adblock-9.9.9.zip' }),
+  json: async () => ({
+    version: '9.9.9',
+    zip: 'downloads/freebuff-adblock-9.9.9.zip',
+    desktop: 'downloads/freebuff-adblock-desktop.sh',
+    desktopZip: 'downloads/freebuff-adblock-desktop-9.9.9.zip',
+    desktopWindows: 'downloads/freebuff-adblock-desktop.ps1',
+    desktopWindowsZip: 'downloads/freebuff-adblock-desktop-9.9.9-windows.zip',
+    desktopLinux: 'downloads/freebuff-adblock-desktop-linux.sh',
+    desktopLinuxZip: 'downloads/freebuff-adblock-desktop-9.9.9-linux.zip',
+    origin: 'https://example.test',
+  }),
 });
 
 const cachedScript = cached.window.document.createElement('script');
@@ -413,6 +536,28 @@ check(
   'the zip link follows the healed version',
   cached.window.document.querySelector('[data-zip]').getAttribute('href'),
   'downloads/freebuff-adblock-9.9.9.zip'
+);
+
+check(
+  'the Linux zip link follows the healed version too',
+  cached.window.document.querySelector('[data-desktop-linux-zip]').getAttribute('href'),
+  'downloads/freebuff-adblock-desktop-9.9.9-linux.zip'
+);
+
+check(
+  'and the Linux one-liner is rebuilt from the origin version.json reports',
+  cached.window.document.querySelector('[data-desktop-linux-command]').textContent.trim(),
+  'curl -fsSL https://example.test/downloads/freebuff-adblock-desktop-linux.sh | sh'
+);
+check(
+  'the Windows tool link heals with it',
+  cached.window.document.querySelector('[data-desktop-win-zip]').getAttribute('href'),
+  'downloads/freebuff-adblock-desktop-9.9.9-windows.zip'
+);
+check(
+  'and its one-liner is rebuilt from the origin version.json reports',
+  cached.window.document.querySelector('[data-desktop-win-command]').textContent.trim(),
+  'irm https://example.test/downloads/freebuff-adblock-desktop.ps1 | iex'
 );
 
 const failed = results.filter((r) => !r).length;

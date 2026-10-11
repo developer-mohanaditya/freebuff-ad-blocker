@@ -1,0 +1,124 @@
+Freebuff AdBlock for Desktop - Linux
+====================================
+
+Tool version __FBD_VERSION__. Blocks the ads Freebuff Desktop renders from the
+orchestrator process it ships inside its own application directory.
+
+WHAT IS IN THIS ZIP
+-------------------
+
+  freebuff-adblock-linux.sh   the tool
+  INSTALL-linux.txt           this file
+
+Nothing else, and nothing to install first. It is a POSIX shell script that uses
+the perl and pgrep your distribution already has - both are present on a normal
+desktop install. `doctor` says so if either is missing.
+
+
+BEFORE YOU START: THE APPIMAGE RULE
+-----------------------------------
+
+Freebuff for Linux ships as an AppImage: one executable holding a read-only
+filesystem. There is no file inside it to patch, and this tool will never write
+to your download - it cannot, and it does not try.
+
+So it does the next best thing, which works out better in practice:
+
+  1. it extracts the image using the runtime the image itself carries (no FUSE,
+     no squashfs-tools, no root, nothing to install),
+  2. it patches the extracted copy, which lives in
+       ~/.local/share/freebuff-adblock/freebuff-<version>/
+  3. and it tells you to start that copy instead of the original image.
+
+Your .AppImage is left exactly as it was - same bytes, same signature. Keep it as
+the unpatched fallback: running it still shows ads, which is how you check the
+difference.
+
+If you point --app at an ordinary directory instead - an AppDir you extracted
+yourself, or a system install such as /opt/Freebuff - it patches in place, exactly
+like the macOS tool.
+
+
+RUN IT
+------
+
+  sh freebuff-adblock-linux.sh
+
+That is `install`: it reports what it found, writes a pristine backup, patches,
+and prints how to start the patched copy. Afterwards:
+
+  ~/.local/share/freebuff-adblock/freebuff-0.0.164/squashfs-root/AppRun
+
+If it could not find your AppImage, pass it yourself:
+
+  sh freebuff-adblock-linux.sh install --app ~/Applications/Freebuff-0.0.164-linux-x86_64.AppImage
+
+It looks in ~/Applications, ~/Downloads, ~/.local/bin, ~/bin, ~/Desktop, /opt,
+/usr/local/bin and the current directory, for a file named *Freebuff*.AppImage.
+
+
+AFTER YOU RUN IT
+----------------
+
+1. Start the patched copy, not the original image (the path is printed for you).
+   The orchestrator is read once at launch, so the patch only takes effect on the
+   next start.
+
+2. Check what it loaded:
+
+     sh freebuff-adblock-linux.sh verify
+
+   That waits for something to be running the patched file and then compares two
+   times - when the patch was written, and when the running process started.
+   Ctrl-C stops the wait at any time, and an interrupted wait prints no verdict.
+
+3. After a Freebuff update, run `install` again. An update is a new AppImage, and
+   the patched copy is left behind by it.
+
+
+OTHER COMMANDS
+--------------
+
+  sh freebuff-adblock-linux.sh status    report what is applied - changes nothing
+  sh freebuff-adblock-linux.sh scan      list every anchor this build has - changes nothing
+  sh freebuff-adblock-linux.sh revert    restore the pristine backup
+  sh freebuff-adblock-linux.sh doctor    environment report, for a bug report
+
+`status` and `scan` extract a temporary copy and remove it when they finish, so
+they never leave anything behind. `install`, `revert` and `verify` use the copy
+under ~/.local/share/freebuff-adblock, which is the one they can agree on.
+
+
+WHAT IT DOES, AND WHAT IT DOES NOT
+----------------------------------
+
+It forces the ad auction to return no ads and cuts the ad client off before it
+sends, at two anchors in the orchestrator. Nothing else in the file changes.
+
+It refuses to touch a build whose anchors it does not recognise, prints the counts
+it saw, and leaves the file alone - a Freebuff release that renames a function is
+a refusal to read, not a half-patched app. `scan` prints every candidate site, so
+re-anchoring is a report to read instead of a dead end.
+
+It never asks for a password, never uses sudo, and never changes a file outside
+the copy it manages.
+
+
+IF SOMETHING GOES WRONG
+-----------------------
+
+Nothing is written until every anchor is counted and matched. If a write does not
+check out afterwards, the pristine backup goes straight back.
+
+A system install under /opt or /usr belongs to root, so patching it needs root.
+The tool says that rather than escalating by itself - and the AppImage path above
+never needs it.
+
+Get the original back:
+
+  sh freebuff-adblock-linux.sh revert
+
+Full source, issues and the macOS and Windows tools:
+  __FBD_ORIGIN__
+
+MIT licensed. See LICENSE.

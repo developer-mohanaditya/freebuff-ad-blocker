@@ -23,8 +23,8 @@ Some of these do not exist yet. The ones marked **MISSING** are what actually
 gates the first submission.
 
 - [x] Extension icon, 128×128 — `extension/icons/icon128.png`
-- [x] Flat package with `manifest.json` at the root — `freebuff-adblock-1.4.1-store.zip`
-- [x] Firefox package with the event-page background — `freebuff-adblock-1.4.1-firefox.zip`
+- [x] Flat package with `manifest.json` at the root — `freebuff-adblock-<version>-store.zip`
+- [x] Firefox package with the event-page background — `freebuff-adblock-<version>-firefox.zip`
 - [x] Small promo tile at **440×280** — `site/store-assets/promo-440x280.png`
 - [x] Marquee at **1400×560** (Chrome only, optional) — `site/store-assets/marquee-1400x560.png`
 - [x] Four screenshots at **1280×800** — `site/store-assets/screenshot-*.png`
@@ -71,7 +71,7 @@ five minutes:
    moved later.
 2. Accept the developer agreement and pay the **$5** registration fee. Turn on
    2FA for the account; the dashboard requires it.
-3. Click **Add new item**, upload `freebuff-adblock-1.4.1-store.zip`.
+3. Click **Add new item**, upload `freebuff-adblock-<version>-store.zip`.
 4. **Store listing** tab — name, short description, detailed description
    (copy is in the section at the bottom of this file), category, language,
    and the icon, screenshots and promo tile.
@@ -117,7 +117,7 @@ Free, but a separate account from Chrome. Same zip — no changes needed.
    (outlook.com / live.com / hotmail.com). Work or school accounts frequently
    cannot register for this program.
 2. In Partner Center, **Home → Workspaces → Edge → Create new extension**.
-3. Drag in `freebuff-adblock-1.4.1-store.zip`. Partner Center validates the
+3. Drag in `freebuff-adblock-<version>-store.zip`. Partner Center validates the
    manifest and reports errors immediately — fix and re-upload if it complains.
 4. **Availability** — Visibility **Public**, or **Hidden** to keep it out of
    search while still installable by link. Pick your markets.
@@ -155,14 +155,14 @@ package must not have, and the source `extension/manifest.json` stays clean.
    | **Listed** | public page on AMO, appears in search, installs from AMO |
    | **Unlisted / self-distribution** | AMO signs it, no public page. You host the signed `.xpi` |
 
-3. Upload `freebuff-adblock-1.4.1-firefox.zip` (rename to `.xpi` if you prefer —
+3. Upload `freebuff-adblock-<version>-firefox.zip` (rename to `.xpi` if you prefer —
    the bytes are identical). It should validate as **0 errors, 0 warnings, 0
    notices** across all five categories. To see that report before uploading,
    run the same linter AMO runs — no dependency is added to the project, this
    fetches it on the spot:
 
    ```
-   npx --yes addons-linter@10.13.0 site/downloads/freebuff-adblock-1.4.1-firefox.zip
+   npx --yes addons-linter@10.13.0 site/downloads/freebuff-adblock-<version>-firefox.zip
    ```
 4. Both channels go through **manual review**. Unlisted is usually signed
    quickly, but it is not automatic and can queue behind a queue. Do not plan
@@ -237,9 +237,13 @@ two live URLs are the ones actually shipped.
    release**: it renames the three browser packages, the desktop tool's package
    and its own stamp, the update feed and the tag on the site. There is no second
    version to bump, and nothing else to edit by hand — the build propagates it.
-2. Check the desktop tool still matches the current Freebuff build, since it
-   ships with the extension: `sh desktop/freebuff-adblock.sh scan` against the
-   installed app, and re-anchor if the report says an anchor moved.
+2. Check the desktop tools still match the current Freebuff build, since they
+   ship with the extension: `sh desktop/freebuff-adblock.sh scan` on macOS,
+   `desktop/freebuff-adblock.ps1 scan` on Windows and
+   `sh desktop/freebuff-adblock-linux.sh scan` on Linux, against the installed
+   app, and re-anchor all three if the report says an anchor moved. The anchors are
+   the same shape on every platform — Electron resources are platform-independent —
+   so one report usually re-anchors all three.
 3. `npm run build && npm test && npm run validate`
 4. Upload the new zips. Stores review updates, then roll them out themselves —
    nothing to do on our side.
@@ -250,23 +254,49 @@ two live URLs are the ones actually shipped.
 
 ## 6. The desktop tool
 
-The desktop app is **not** a store submission and has no listing. It ships as a
-file on this site, so there is no review, no signing and no fee — `npm run build`
-stamps and packages it into `site/downloads/` alongside the extension zips:
+The desktop app is **not** a store submission and has no listing. It ships as
+files on this site, so there is no review, no signing and no fee — `npm run build`
+stamps and packages them into `site/downloads/` alongside the extension zips:
 
 | File | For |
 | --- | --- |
-| `freebuff-adblock-desktop.sh` | the `curl … | sh` one-liner on the install page |
-| `freebuff-adblock-desktop-<version>.zip` | the download button: the same script, a double-clickable launcher, `INSTALL.txt` |
+| `freebuff-adblock-desktop.sh` | the `curl … | sh` one-liner on the install page (macOS) |
+| `freebuff-adblock-desktop-<version>.zip` | the macOS download button: the same script, a double-clickable launcher, `INSTALL.txt` |
+| `freebuff-adblock-desktop.ps1` | the `irm … \| iex` one-liner on the install page (Windows) |
+| `freebuff-adblock-desktop-<version>-windows.zip` | the Windows download button: the same script, a double-clickable `.cmd`, `INSTALL-windows.txt` |
+| `freebuff-adblock-desktop-linux.sh` | the `curl … \| sh` one-liner on the install page (Linux) |
+| `freebuff-adblock-desktop-<version>-linux.zip` | the Linux download button: the same script and `INSTALL-linux.txt` |
 
-Both carry the same version as `extension/manifest.json`, so one bump moves
-everything. The zip stores Unix permission bits, which is what keeps the
+All six carry the same version as `extension/manifest.json`, so one bump moves
+everything. The macOS zip stores Unix permission bits, which is what keeps the
 launcher executable after extraction — a bare file served over HTTP loses that
-bit, which is why the one-liner pipes the script into `sh` rather than
-executing it.
+bit, which is why the one-liner pipes the script into `sh` rather than executing
+it. The Windows zip needs no such thing: a `.cmd` is run by name, and the `.ps1`
+is piped into `iex` for the one-liner, which also sidesteps the mark-of-the-web
+and the execution policy. The Linux zip carries no launcher on purpose — an
+AppImage user already runs things from a shell, and the tool is the entry point —
+but it ships the read-me, because the extract-then-start workflow is not obvious
+from the script's name.
 
-The desktop tool is verified by `npm run test:desktop` and by `npm run validate`
-(shell syntax, the build placeholders, and all three patch markers), so a release
+The Linux tool is the one platform where the artifact is not patched in place:
+it extracts the AppImage it is given into
+`~/.local/share/freebuff-adblock/<version>/` and patches that copy. So on Linux
+the release check is two-part — `install`, then start the path it prints — and the
+original `.AppImage` stays as it was downloaded. Nothing about that changes the
+packaging: the served file and the zip are stamped and built exactly like the
+other two.
+
+One naming trap, and `npm run validate` now fails on it: the two shell tools live
+inside their zips under the names their own read-mes and `Usage:` text use
+(`freebuff-adblock.sh`, `freebuff-adblock-linux.sh`), which is **not** the name
+they are served under (`freebuff-adblock-desktop*.sh`) — the served name is the
+one-liner's URL. Naming the zip entry after the served file is how the macOS
+`.command` launcher came to run a file that was not in the folder. The `.ps1` has
+one name everywhere, and that is the shape to copy.
+
+The desktop tools are verified by `npm run test:desktop`, `npm run test:windows`,
+`npm run test:linux` and `npm run validate` (shell syntax, PowerShell parsing when
+a host has it, the build placeholders, and every patch marker), so a release
 checklist is the same as any other: `npm run build && npm test && npm run validate`.
 
 ---

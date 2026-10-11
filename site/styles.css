@@ -559,7 +559,11 @@ strong {
   margin-bottom: 0;
 }
 
-.panel a {
+/* A link inside a panel is accent-coloured. `:not(.btn)` is load-bearing, not
+   tidiness: this selector is more specific than `.btn-primary`, so without it a
+   button placed in a panel loses its dark label and renders as an accent-coloured
+   word on the accent-coloured fill - invisible, with nothing failing anywhere. */
+.panel a:not(.btn) {
   color: var(--accent);
 }
 

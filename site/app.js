@@ -164,13 +164,28 @@ if (storeButton) {
  * The desktop section's platform switch.
  *
  * A platform with no build yet carries `disabled` in the markup, so a click
- * listener never fires for it - Windows and Linux are shown, greyed and inert
- * on purpose. This only does the switching; adding a build means adding its
- * `data-platform-panel` block and dropping the `disabled` attribute, with no
- * change here.
+ * listener never fires for it - Linux is shown, greyed and inert on purpose. This
+ * only does the switching; adding a build means adding its `data-platform-panel`
+ * block and dropping the `disabled` attribute, with no change here.
+ *
+ * The switch opens on the platform the page is being read on when that platform
+ * has a build, because the reader who needs the Windows one should not have to
+ * notice that the macOS one is what loaded. Anything unrecognised keeps the
+ * markup's default, and a platform whose tab is disabled is ignored.
  */
 const platformTabs = document.querySelectorAll('[data-platform]');
 const platformPanels = document.querySelectorAll('[data-platform-panel]');
+
+/** Which build this reader can actually use, or null when it is not obvious. */
+function detectedPlatform() {
+  const reported = (navigator.userAgentData && navigator.userAgentData.platform) || '';
+  const haystack = `${reported} ${navigator.platform || ''} ${navigator.userAgent || ''}`;
+
+  if (/win/i.test(haystack)) return 'windows';
+  if (/mac|iphone|ipad/i.test(haystack)) return 'macos';
+  if (/linux|android/i.test(haystack)) return 'linux';
+  return null;
+}
 
 if (platformTabs.length && platformPanels.length) {
   const selectPlatform = (name) => {
@@ -188,6 +203,13 @@ if (platformTabs.length && platformPanels.length) {
   platformTabs.forEach((tab) => {
     tab.addEventListener('click', () => selectPlatform(tab.dataset.platform));
   });
+
+  const preferred = detectedPlatform();
+  const preferredTab = preferred
+    ? [...platformTabs].find((tab) => tab.dataset.platform === preferred && !tab.disabled)
+    : null;
+
+  if (preferredTab && !preferredTab.classList.contains('is-active')) selectPlatform(preferred);
 }
 
 /* ----------------------------------------------------------------- copy path */
@@ -301,14 +323,36 @@ async function reconcileVersion() {
     const download = document.querySelector('[data-zip]');
     if (download && data.zip) download.setAttribute('href', data.zip);
 
-    // The desktop tool has its own downloads and its own one-liner. They are
-    // stamped into the page at build time too; this only heals a stale cache.
+    // The desktop tools have their own downloads and their own one-liners - one
+    // pair per platform. They are stamped into the page at build time too; this
+    // only heals a stale cache.
     const desktopZip = document.querySelector('[data-desktop-zip]');
     if (desktopZip && data.desktopZip) desktopZip.setAttribute('href', data.desktopZip);
 
     if (data.desktop && data.origin) {
       document.querySelectorAll('[data-desktop-command]').forEach((el) => {
         el.textContent = `curl -fsSL ${data.origin}/${data.desktop} | sh`;
+      });
+    }
+
+    const windowsZip = document.querySelector('[data-desktop-win-zip]');
+    if (windowsZip && data.desktopWindowsZip) windowsZip.setAttribute('href', data.desktopWindowsZip);
+
+    if (data.desktopWindows && data.origin) {
+      document.querySelectorAll('[data-desktop-win-command]').forEach((el) => {
+        el.textContent = `irm ${data.origin}/${data.desktopWindows} | iex`;
+      });
+    }
+
+    // Linux is a third pair of the same thing. Its one-liner is `curl | sh` like
+    // the macOS one, but a file of its own: the two scripts are separate tools
+    // that happen to share their anchors.
+    const linuxZip = document.querySelector('[data-desktop-linux-zip]');
+    if (linuxZip && data.desktopLinuxZip) linuxZip.setAttribute('href', data.desktopLinuxZip);
+
+    if (data.desktopLinux && data.origin) {
+      document.querySelectorAll('[data-desktop-linux-command]').forEach((el) => {
+        el.textContent = `curl -fsSL ${data.origin}/${data.desktopLinux} | sh`;
       });
     }
   } catch {
